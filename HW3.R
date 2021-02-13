@@ -133,4 +133,27 @@ subjects_ROI %>%
 
 # Pull togheter the subjects: Mean Value -------------------------------------
 
+#reference : 
+#https://stackoverflow.com/questions/31465415/combine-multiple-data-frames-and-calculate-average
+
+library(data.table)
+
+#rename the subjects
+names(asd_sel) <- c(paste("subj", seq(1,9), sep = '_0'), 
+                   paste("subj", seq(10,12), sep = '_'))
+
+#not consider outliers 
+asd <- asd_sel[-1]
+
+#add a column called index, with number from 1 to 145
+for (i in 1 : length(asd)) {
+  asd[[i]] <- cbind(index = seq(1, 145), asd[[i]])
+}
+
+# build a dataframe of the mean values of the cell with the same index
+# and the same ROI 
+asd_mean <- rbindlist(asd)[,lapply(.SD,mean), index]
+
+
+
 
