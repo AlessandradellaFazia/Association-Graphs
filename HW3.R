@@ -83,6 +83,7 @@ tmp %>%
 #Concusions: subject1 is an outlyer
 
 
+
 # Data Exploration: TD subjects -------------------------------------------
 
 #Let's see that in the TD dataset the first and sencond subjects are outliers
@@ -131,18 +132,46 @@ subjects_ROI %>%
        for a total of 16820 values per subject.") +
   xlab("")
 
-# Pull togheter the subjects: Mean Value -------------------------------------
+
+# the threshold -----------------------------------------------------------
+
+load("C:/Users/Alessandra/Desktop/sds/HW3/hw3_data.RData")
+
+#rename 
+names(asd_sel) <- c(paste("subj", seq(1,9), sep = '_0'), 
+                    paste("subj", seq(10,12), sep = '_'))
+names(td_sel) <- c(paste("subj", seq(1,9), sep = '_0'), 
+                    paste("subj", seq(10,12), sep = '_'))
+
+#not consider outliers 
+asd <- asd_sel[-1]
+td  <- td_sel[c(-1,-2)]
+
+asd.cor <- lapply(asd, cor)
+corr.obs <- c(sapply(asd.cor, function(x) x[lower.tri(x)], simplify = T))
+
+td.cor <- lapply(td, cor)
+corr.obs.td <- c(sapply(td.cor, function(x) x[lower.tri(x)], simplify = T))
+corr.obs <- c(corr.obs, corr.obs.td)
+hist(corr.obs, probability = T, col = "orange", border = "white", 
+     main = "Histogram of correlation values observed in the 2 groups")
+th <- quantile(corr.obs, probs = 0.80)
+th <- round(th, 2)
+abline(v = thr, lwd = 2, col = "red")
+text(x = thr,y = 0, labels = "80th perc", col = "red", cex = 1)
+# Pull togheter the data: Mean Value -------------------------------------
 
 #reference : 
 #https://stackoverflow.com/questions/31465415/combine-multiple-data-frames-and-calculate-average
 
 library(data.table)
+load("C:/Users/Alessandra/Desktop/sds/HW3/hw3_data.RData")
 
-#rename the subjects
+#rename the subjects ASD
 names(asd_sel) <- c(paste("subj", seq(1,9), sep = '_0'), 
                    paste("subj", seq(10,12), sep = '_'))
 
-#not consider outliers 
+#not consider the outlier
 asd <- asd_sel[-1]
 
 #add a column called index, with number from 1 to 145
@@ -150,10 +179,211 @@ for (i in 1 : length(asd)) {
   asd[[i]] <- cbind(index = seq(1, 145), asd[[i]])
 }
 
-# build a dataframe of the mean values of the cell with the same index
-# and the same ROI 
+# build a dataframe containg the average of the original cells, 
+# combining the cells with the same index and same roi
 asd_mean <- rbindlist(asd)[,lapply(.SD,mean), index]
 
+#remove the index column
+asd_mean <- subset(asd_mean, select = -c(index))
+
+#rename the subjects TD 
+names(td_sel) <- c(paste("subj", seq(1,9), sep = '_0'), 
+                    paste("subj", seq(10,12), sep = '_'))
+
+#not consider the two outliers 
+td <- td_sel[c(-1,-2)]
+
+#add a column called index, with number from 1 to 145
+for (i in 1 : length(td)) {
+  td[[i]] <- cbind(index = seq(1, 145), td[[i]])
+}
+
+# build a dataframe containg the average of the original cells, 
+# combining the cells with the same index and same roi
+td_mean <- rbindlist(td)[,lapply(.SD,mean), index]
+
+#remove the index column
+td_mean <- subset(td_mean, select = -c(index))
+
+# Correlation Test: Functions -------------------------------------------------------------
+
+?corrplot::cor.mtest
+
+my.cor.test <- function(x,y, r0, conf.level = 0.95) {
+  #r0 is the correlation according to null hypothesis
+  
+  n <- length(x)
+  r <- cor(x, y)
+  df <- (n - 2)
+  
+  r <- abs(r) #test is |r| > r0
+  z.r <- atanh(r)
+  z.r0 <- atanh(r0)
+  sigma <- 1 / sqrt(n - 3)
+  z <- (z.r - z.r0)/sigma
+  
+  cint <- z.r - sigma * qnorm(conf.level) 
+  cint <- tanh(cint)
+  pval <- pnorm(z, lower.tail=FALSE)
+  
+  list(conf.int = cint, p.value = pval)
+}
+
+
+
+my.cor.mtest <- function(mat, r0, conf.level = 0.95) 
+{
+  mat <- as.matrix(mat)
+  n <- ncol(mat)
+  p.mat <- lowCI.mat <- uppCI.mat <- matrix(NA, n, n)
+  diag(p.mat) <- 0
+  diag(lowCI.mat) <- diag(uppCI.mat) <- 1
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      tmp <- my.cor.test(x = mat[, i], y = mat[, j], r0 = r0, conf.level = conf.level)
+      p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+      if (!is.null(tmp$conf.int)) {
+        lowCI.mat[i, j] <- lowCI.mat[j, i] <- tmp$conf.int[1]
+        uppCI.mat[i, j] <- uppCI.mat[j, i] <- tmp$conf.int[2]
+      }
+    }
+  }
+  list(p = p.mat, lowCI = lowCI.mat, uppCI = uppCI.mat)
+}
+
+
+
+# Correlation Test witout control -----------------------------------------------
+
+#116x116 corelation matrix
+cor.asd.matrix <- cor(asd_mean)
+
+alpha <- 0.05
+n <- ncol(asd_mean)
+m <- choose(n, 2) # binomial coefficients
+to_delete <- diagonal_indeces <- seq(1, n*n, n + 1) # index of diagonal elements 
+th <- 0.21
+
+asd_multi_matrix <- my.cor.mtest(asd_mean, r0 = th, conf.level = 0.95)
+
+asd_edges_index <- which(asd_multi_matrix$p < alpha)
+asd_edges_index <- setdiff(asd_edges_index, to_delete) #remove diagonal elements
+length(asd_edges_index)
+
+#check if [-t, t] intersect confidence interval is equal to the empy set 
+#that is when t < ci.low or when ci.up > -t
+asd_index <- which(th < asd_multi_matrix$lowCI | asd_multi_matrix$uppCI < -th)
+asd_index <- setdiff(asd_index, to_delete) #remove diagonal elements
+length(asd_index)
+
+# TD SUBJECTS
+
+td_multi_matrix <- my.cor.mtest(td_mean, r0 = th, conf.level = 0.95)
+
+td_edges_index <- which(td_multi_matrix$p < alpha)
+td_edges_index <- setdiff(td_edges_index, to_delete) #remove diagonal elements
+length(td_edges_index)
+
+#check if [-t, t] intersect confidence interval is equal to the empy set 
+#that is when t < ci.low or when ci.up > -t
+td_index <- which(th < td_multi_matrix$lowCI | td_multi_matrix$uppCI < -th)
+td_index <- setdiff(td_index, to_delete) #remove diagonal elements
+length(td_index)
+
+
+# Bonferroni control ------------------------------------------------------
+
+t_bonf <- alpha/m
+bon_asd_edges_index <- which(asd_multi_matrix$p < alpha/m)  # the p value not depens on conf.level
+bon_asd_edges_index <- setdiff(bon_asd_edges_index, to_delete)
+length(bon_asd_edges_index)
+
+bon_asd_multi_matrix <- my.cor.mtest(asd_mean, r0 = th, conf.level = 1 - (alpha/m))
+
+#check if [-t, t] intersect confidence interval is equal to the empy set 
+#that is when   t < lowCI   or   when   uppCI > - t 
+bon_asd_index <- which(th < bon_asd_multi_matrix$lowCI | bon_asd_multi_matrix$uppCI < -th)
+bon_asd_index <- setdiff(bon_asd_index, to_delete) #remove diagonal elements
+length(bon_asd_index)
+
+
+# TD SUBJECTS 
+
+bon_td_edges_index <- which(td_multi_matrix$p < alpha/m)  # the p value not depens on conf.level
+bon_td_edges_index <- setdiff(bon_td_edges_index, to_delete)
+length(bon_td_edges_index)
+
+bon_td_multi_matrix <- my.cor.mtest(td_mean, r0 = th, conf.level = 1 - (alpha/m))
+
+#check if [-t, t] intersect confidence interval is equal to the empy set 
+#that is when   t < lowCI   or   when   uppCI > - t 
+bon_td_index <- which(th < bon_td_multi_matrix$lowCI | bon_td_multi_matrix$uppCI < -th)
+bon_td_index <- setdiff(bon_td_index, to_delete) #remove diagonal elements
+length(bon_td_index)
+
+
+# Graph  ------------------------------------------------------------------
+
+require(igraph, quietly = TRUE)
+
+asd_bon_pmat <- bon_asd_multi_matrix$p
+asd_bon_pmat[diagonal_indeces] <- 1
+asd_bon_adj_mat <- matrix(0, nrow = n, ncol = n)
+asd_bon_adj_mat[ which(asd_bon_pmat < t_bonf) ] <- 1
+
+asd_graph_bon <-graph_from_adjacency_matrix(asd_bon_adj_mat, mode = "undirected")
+
+# TD SUBJECTS 
+
+td_bon_pmat <- bon_td_multi_matrix$p
+td_bon_pmat[diagonal_indeces] <- 1
+td_bon_adj_mat <- matrix(0, nrow = n, ncol = n)
+td_bon_adj_mat[ which(td_bon_pmat < t_bonf) ] <- 1
+
+td_graph_bon <-graph_from_adjacency_matrix(td_bon_adj_mat, mode = "undirected")
+
+# Plot
+
+par(mfrow=c(1,2),  mar=c(1,1,1,1), family = "sans", font.sub = 2, cex.sub = 0.8) #sans" and "mono
+
+plot(asd_graph_bon, 
+     vertex.size = 10, 
+     vertex.color = "royalblue",
+     vertex.shape = "sphere",
+     vertex.label.cex = 0.8,
+     vertex.label.font = 2,
+     vertex.label.color=grey(level = .9),
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "Correlation Graph ASD",
+     sub = "Bonferroni adjustment",
+     frame = T
+)
+
+plot(td_graph_bon, 
+     vertex.size = 10, 
+     vertex.color = "royalblue",
+     vertex.shape = "sphere",
+     vertex.label.cex = 0.8,
+     vertex.label.font = 2,
+     vertex.label.color=grey(level = .9),
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "Correlation Graph TD",
+     sub = "Bonferroni adjustment",
+     frame = T
+)
+
+
+print(asd_graph_bon)
+length(E(asd_graph_bon))
+length(V(asd_graph_bon))
+
+
+
+# Graph of difference  ----------------------------------------------------
 
 
 
