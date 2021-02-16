@@ -1,7 +1,7 @@
-library(viridis)
+library(viridis, quietly = T)
 #install.packages("hrbrthemes")
-library(hrbrthemes)
-library(tidyverse)
+library(hrbrthemes, quietly = T)
+library(tidyverse, quietly = T)
 
 set.seed(1234)
 load("C:/Users/Alessandra/Desktop/sds/HW3/hw3_data.RData")
@@ -164,7 +164,7 @@ text(x = thr,y = 0, labels = "80th perc", col = "red", cex = 1)
 #reference : 
 #https://stackoverflow.com/questions/31465415/combine-multiple-data-frames-and-calculate-average
 
-library(data.table)
+library(data.table, quietly = T)
 load("C:/Users/Alessandra/Desktop/sds/HW3/hw3_data.RData")
 
 #rename the subjects ASD
@@ -322,30 +322,186 @@ bon_td_index <- setdiff(bon_td_index, to_delete) #remove diagonal elements
 length(bon_td_index)
 
 
-# Graph  ------------------------------------------------------------------
+# ASD and TD Graph  ------------------------------------------------------------------
 
 require(igraph, quietly = TRUE)
 
 asd_bon_pmat <- bon_asd_multi_matrix$p
 asd_bon_pmat[diagonal_indeces] <- 1
-asd_bon_adj_mat <- matrix(0, nrow = n, ncol = n)
+asd_bon_adj_mat <- matrix(0, nrow = n, ncol = n, dimnames = dimnames(cor.asd.matrix))
 asd_bon_adj_mat[ which(asd_bon_pmat < t_bonf) ] <- 1
 
-asd_graph_bon <-graph_from_adjacency_matrix(asd_bon_adj_mat, mode = "undirected")
+G_asd_bon <-graph_from_adjacency_matrix(asd_bon_adj_mat, mode = "undirected")
 
 # TD SUBJECTS 
 
 td_bon_pmat <- bon_td_multi_matrix$p
 td_bon_pmat[diagonal_indeces] <- 1
-td_bon_adj_mat <- matrix(0, nrow = n, ncol = n)
+td_bon_adj_mat <- matrix(0, nrow = n, ncol = n, dimnames = dimnames(cor.asd.matrix))
 td_bon_adj_mat[ which(td_bon_pmat < t_bonf) ] <- 1
 
-td_graph_bon <-graph_from_adjacency_matrix(td_bon_adj_mat, mode = "undirected")
+G_td_bon <-graph_from_adjacency_matrix(td_bon_adj_mat, mode = "undirected")
 
 # Plot
 
-par(mfrow=c(1,2),  mar=c(1,1,1,1), family = "sans", font.sub = 2, cex.sub = 0.8) #sans" and "mono
+par(mfrow=c(1,2), oma = c(0,0,0,0), family = "sans", font.sub = 2, cex.sub = 0.8) #sans" and "mono
 
+plot(G_asd_bon, 
+     vertex.size = 12, 
+     vertex.color = "royalblue",
+     vertex.shape = "sphere",
+     vertex.label.cex = 0.8,
+     vertex.label.font = 2,
+     vertex.label.color=grey(level = .9),
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "Correlation Graph ASD",
+     sub = "Bonferroni adjustment"
+)
+
+plot(G_td_bon, 
+     vertex.size = 12, 
+     vertex.color = "royalblue",
+     vertex.shape = "sphere",
+     vertex.label.cex = 0.8,
+     vertex.label.font = 2,
+     vertex.label.color=grey(level = .9),
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "Correlation Graph TD",
+     sub = "Bonferroni adjustment"
+)
+par(mfrow = c(1,1))
+
+print(asd_graph_bon)
+length(E(asd_graph_bon))
+length(V(asd_graph_bon))
+
+
+# Difference between independent correlation: Functions -------------------
+
+#reference : http://davidmlane.com/hyperstat/B8712.html
+
+my.cor.dif.test <- function(x1, y1, x2, y2, r0, conf.level = 0.95) {
+  #r0 is the correlation according to null hypothesis
+  #x1 : value x of group 1   #y1 : value y of group 1 
+  #x2 : value x of group 2   #y2 : value y of group 2
+  
+  n1 <- length(x1)
+  n2 <- length(x2)
+  r1 <- cor(x1, y1)
+  r2 <- cor(x2, y2)
+  
+  z1 <- atanh(r1)
+  z2 <- atanh(r2)
+  var1 <- (1 / (n1 - 3)) 
+  var2 <- (1 / (n2 - 3)) 
+  sigma <- sqrt(var1 + var2) # standard error of the statistic
+  
+  z.r  <- (abs(z1 - z2))
+  z.r0 <- atanh(r0)
+  z <- (z.r - z.r0)/sigma
+  
+  cint <- c(z.r - sigma * qnorm(conf.level), Inf)
+  cint <- tanh(cint)
+  pval <- pnorm(z, lower.tail=FALSE)
+  
+  list(conf.int = cint, p.value = pval)
+}
+
+
+
+my.dif.cor.mtest <- function(mat_g1, mat_g2, r0, conf.level = 0.95) 
+{
+  mat_g1 <- as.matrix(mat_g1)
+  mat_g2 <- as.matrix(mat_g2)
+  n <- ncol(mat_g1)
+  p.mat <- lowCI.mat <- uppCI.mat <- matrix(NA, n, n)
+  diag(p.mat) <- 0
+  diag(lowCI.mat) <- diag(uppCI.mat) <- 1
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      tmp <- my.cor.dif.test(x1 = mat_g1[, i], y1 = mat_g1[, j],
+                             x2 = mat_g2[, i], y2 = mat_g2[, j],
+                             r0 = r0, conf.level = conf.level)
+      p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+      if (!is.null(tmp$conf.int)) {
+        lowCI.mat[i, j] <- lowCI.mat[j, i] <- tmp$conf.int[1]
+        uppCI.mat[i, j] <- uppCI.mat[j, i] <- tmp$conf.int[2]
+      }
+    }
+  }
+  list(p = p.mat, lowCI = lowCI.mat, uppCI = uppCI.mat)
+}
+
+
+# Difference between Correlation: with and without Bonferroni -------------
+
+th <- 0.21
+
+# without control
+dif_multi <- my.dif.cor.mtest(asd_mean, td_mean, r0 = th)
+dif.pmat <- dif_multi$p
+sum(dif_multi$p < alpha)
+sum(dif_multi$lowCI > th)
+
+# Bonferoni control
+t_bonf <- (alpha/m)
+dif_bon_multi <- my.dif.cor.mtest( asd_mean, td_mean, r0 = th, conf.level = 1 - (alpha/m))
+dif.bon.pmat <- dif_bon_multi$p
+
+#how many edges 
+length(setdiff(which(dif_bon_multi$p < t_bonf), diagonal_indeces))
+length(setdiff(which(dif_bon_multi$lowCI > th), diagonal_indeces))
+
+# Difference between correlation: Graphs ----------------------------------
+
+cor.mat <- cor(asd_mean)
+dif_bon_pmat <- dif_bon_multi$p
+dif_bon_pmat[diagonal_indeces] <- 1
+dif_bon_adj_mat <- matrix(0, nrow = n, ncol = n, dimnames = dimnames(cor.asd.matrix))
+dif_bon_adj_mat [which(dif_bon_pmat < t_bonf)] <- 1
+
+G_delta_bon <-graph_from_adjacency_matrix(dif_bon_adj_mat, mode = "undirected") 
+
+plot(G_delta_bon, 
+     vertex.size = 15, 
+     vertex.color = rgb(0,0,1,.4),
+     vertex.shape = "circle",
+     vertex.label.cex = 1,
+     vertex.label.font = 2,
+     vertex.label.color="gold",
+     edge.width = 3, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "Difference Correlation Graph",
+     sub = "Bonferroni adjustment",
+     frame = T
+)
+
+#vertices adjacent to at least one edge
+vadj <- V(G_delta_bon) [ adj(E(G_delta_bon)) ]
+G_delta_bon[vadj]$color <- "darkred"
+set_vertex_attr(G_delta_bon, "color", index = vadj, "darkred")
+colrs <- 
+par(mfrow=c(1,3),  mar=c(1,1,1,1), family = "sans", font.sub = 2, cex.sub = 0.8)
+
+plot(G_td_bon, 
+     vertex.size = 10, 
+     vertex.color = "gold",
+     vertex.shape = "sphere",
+     vertex.label.cex = 0.8,
+     vertex.label.font = 2,
+     vertex.label.color=grey(level = .9),
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "TD Correlation",
+     sub = "Bonferroni adjustment",
+     frame = T
+)
 plot(asd_graph_bon, 
      vertex.size = 10, 
      vertex.color = "royalblue",
@@ -356,12 +512,11 @@ plot(asd_graph_bon,
      edge.width = 2, 
      edge.color = "darkgreen",
      curved = TRUE, 
-     main = "Correlation Graph ASD",
+     main = "ASD Correlation",
      sub = "Bonferroni adjustment",
      frame = T
 )
-
-plot(td_graph_bon, 
+plot(dif_graph_bon, 
      vertex.size = 10, 
      vertex.color = "royalblue",
      vertex.shape = "sphere",
@@ -371,19 +526,66 @@ plot(td_graph_bon,
      edge.width = 2, 
      edge.color = "darkgreen",
      curved = TRUE, 
-     main = "Correlation Graph TD",
+     main = "Difference Correlation",
      sub = "Bonferroni adjustment",
      frame = T
 )
 
+par(mfrow=c(1,1))
 
-print(asd_graph_bon)
+length(E(td_graph_bon))
 length(E(asd_graph_bon))
-length(V(asd_graph_bon))
+length(E(dif_graph_bon))
+E(dif_graph_bon)
+
+G_TD <- subgraph.edges(td_graph_bon, eids = E(td_graph_bon))
+G_ASD <- subgraph.edges(asd_graph_bon, eids = E(asd_graph_bon))
+G_diff <- subgraph.edges(dif_graph_bon, eids = E(dif_graph_bon))
+G_dif <- induced_subgraph(dif_graph_bon, vert_ids, impl = "copy_and_delete")
+
+V(G_dif)$names <- 
+colrs <- c ("lightblue", "gold")
+
+vert_ids <- c(4,10,35,87,88,97)
+V(G_TD)$color <- colrs[1]
+V(G_TD)[vert_ids]$color <- colrs[2]
 
 
+V(asd_graph_bon)$color <- colrs[1]
+V(asd_graph_bon)[vert_ids]$color <- colrs[2]
 
-# Graph of difference  ----------------------------------------------------
+par(mfrow=c(1,3))
+plot(G_TD,
+     vertex.size = 13, 
+     vertex.color = V(G_TD)$color,
+     vertex.shape = "circle",
+     vertex.label.cex = 0.9,
+     vertex.label.font = 2,
+     vertex.label.color=grey(level = .1),
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE)
 
-
-
+plot(asd_graph_bon,
+     vertex.size = 13, 
+     vertex.color = V(asd_graph_bon)$color,
+     vertex.shape = "circle",
+     vertex.label.cex = 0.9,
+     vertex.label.font = 2,
+     vertex.label.color= "black",
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE)
+plot(G_dif,
+     vertex.size = 10, 
+     vertex.color = "gold",
+     vertex.shape = "circle",
+     vertex.label.cex = 0.8,
+     vertex.label.font = 2,
+     vertex.label.color=grey(level = .1),
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE)
+par(mfrow=c(1,1))
+V(G_diff)
+E(G_diff)
