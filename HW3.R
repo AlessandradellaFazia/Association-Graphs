@@ -2,6 +2,7 @@ library(viridis, quietly = T)
 #install.packages("hrbrthemes")
 library(hrbrthemes, quietly = T)
 library(tidyverse, quietly = T)
+require(igraph, quietly = TRUE)
 
 set.seed(1234)
 load("C:/Users/Alessandra/Desktop/sds/HW3/hw3_data.RData")
@@ -214,7 +215,6 @@ my.cor.test <- function(x,y, r0, conf.level = 0.95) {
   
   n <- length(x)
   r <- cor(x, y)
-  df <- (n - 2)
   
   r <- abs(r) #test is |r| > r0
   z.r <- atanh(r)
@@ -222,7 +222,7 @@ my.cor.test <- function(x,y, r0, conf.level = 0.95) {
   sigma <- 1 / sqrt(n - 3)
   z <- (z.r - z.r0)/sigma
   
-  cint <- z.r - sigma * qnorm(conf.level) 
+  cint <- c(z.r - sigma * qnorm(conf.level), Inf)
   cint <- tanh(cint)
   pval <- pnorm(z, lower.tail=FALSE)
   
@@ -230,14 +230,13 @@ my.cor.test <- function(x,y, r0, conf.level = 0.95) {
 }
 
 
-
 my.cor.mtest <- function(mat, r0, conf.level = 0.95) 
 {
   mat <- as.matrix(mat)
   n <- ncol(mat)
   p.mat <- lowCI.mat <- uppCI.mat <- matrix(NA, n, n)
-  diag(p.mat) <- 0
-  diag(lowCI.mat) <- diag(uppCI.mat) <- 1
+  diag(p.mat) <- 1
+  diag(lowCI.mat) <- diag(uppCI.mat) <- 0
   for (i in 1:(n - 1)) {
     for (j in (i + 1):n) {
       tmp <- my.cor.test(x = mat[, i], y = mat[, j], r0 = r0, conf.level = conf.level)
@@ -252,7 +251,6 @@ my.cor.mtest <- function(mat, r0, conf.level = 0.95)
 }
 
 
-
 # Correlation Test witout control -----------------------------------------------
 
 #116x116 corelation matrix
@@ -261,19 +259,17 @@ cor.asd.matrix <- cor(asd_mean)
 alpha <- 0.05
 n <- ncol(asd_mean)
 m <- choose(n, 2) # binomial coefficients
-to_delete <- diagonal_indeces <- seq(1, n*n, n + 1) # index of diagonal elements 
+#to_delete <- diagonal_indeces <- seq(1, n*n, n + 1) # index of diagonal elements 
 th <- 0.21
 
 asd_multi_matrix <- my.cor.mtest(asd_mean, r0 = th, conf.level = 0.95)
 
 asd_edges_index <- which(asd_multi_matrix$p < alpha)
-asd_edges_index <- setdiff(asd_edges_index, to_delete) #remove diagonal elements
 length(asd_edges_index)
 
-#check if [-t, t] intersect confidence interval is equal to the empy set 
-#that is when t < ci.low or when ci.up > -t
-asd_index <- which(th < asd_multi_matrix$lowCI | asd_multi_matrix$uppCI < -th)
-asd_index <- setdiff(asd_index, to_delete) #remove diagonal elements
+#check if [-t, t] does not intersect confidence interval is equal to the empy set 
+#that is when t < ci.low 
+asd_index <- which(th < asd_multi_matrix$lowCI)
 length(asd_index)
 
 # TD SUBJECTS
@@ -281,13 +277,11 @@ length(asd_index)
 td_multi_matrix <- my.cor.mtest(td_mean, r0 = th, conf.level = 0.95)
 
 td_edges_index <- which(td_multi_matrix$p < alpha)
-td_edges_index <- setdiff(td_edges_index, to_delete) #remove diagonal elements
 length(td_edges_index)
 
-#check if [-t, t] intersect confidence interval is equal to the empy set 
-#that is when t < ci.low or when ci.up > -t
-td_index <- which(th < td_multi_matrix$lowCI | td_multi_matrix$uppCI < -th)
-td_index <- setdiff(td_index, to_delete) #remove diagonal elements
+#check if [-t, t] does not intersect confidence interval is equal to the empy set 
+#that is when t < ci.low 
+td_index <- which(th < td_multi_matrix$lowCI)
 length(td_index)
 
 
@@ -295,36 +289,29 @@ length(td_index)
 
 t_bonf <- alpha/m
 bon_asd_edges_index <- which(asd_multi_matrix$p < alpha/m)  # the p value not depens on conf.level
-bon_asd_edges_index <- setdiff(bon_asd_edges_index, to_delete)
 length(bon_asd_edges_index)
 
 bon_asd_multi_matrix <- my.cor.mtest(asd_mean, r0 = th, conf.level = 1 - (alpha/m))
 
-#check if [-t, t] intersect confidence interval is equal to the empy set 
-#that is when   t < lowCI   or   when   uppCI > - t 
-bon_asd_index <- which(th < bon_asd_multi_matrix$lowCI | bon_asd_multi_matrix$uppCI < -th)
-bon_asd_index <- setdiff(bon_asd_index, to_delete) #remove diagonal elements
+#check if [-t, t] does not intersect confidence interval is equal to the empy set 
+#that is when   t < lowCI 
+bon_asd_index <- which(th < bon_asd_multi_matrix$lowCI)
 length(bon_asd_index)
-
 
 # TD SUBJECTS 
 
 bon_td_edges_index <- which(td_multi_matrix$p < alpha/m)  # the p value not depens on conf.level
-bon_td_edges_index <- setdiff(bon_td_edges_index, to_delete)
 length(bon_td_edges_index)
 
 bon_td_multi_matrix <- my.cor.mtest(td_mean, r0 = th, conf.level = 1 - (alpha/m))
 
-#check if [-t, t] intersect confidence interval is equal to the empy set 
-#that is when   t < lowCI   or   when   uppCI > - t 
-bon_td_index <- which(th < bon_td_multi_matrix$lowCI | bon_td_multi_matrix$uppCI < -th)
-bon_td_index <- setdiff(bon_td_index, to_delete) #remove diagonal elements
+#check if [-t, t] does not intersect confidence interval is equal to the empy set 
+#that is when   t < lowCI  
+bon_td_index <- which(th < bon_td_multi_matrix$lowCI)
 length(bon_td_index)
 
 
 # ASD and TD Graph  ------------------------------------------------------------------
-
-require(igraph, quietly = TRUE)
 
 asd_bon_pmat <- bon_asd_multi_matrix$p
 asd_bon_pmat[diagonal_indeces] <- 1
@@ -343,9 +330,7 @@ td_bon_adj_mat[ which(td_bon_pmat < t_bonf) ] <- 1
 G_td_bon <-graph_from_adjacency_matrix(td_bon_adj_mat, mode = "undirected")
 
 # Plot
-
 par(mfrow=c(1,2), oma = c(0,0,0,0), family = "sans", font.sub = 2, cex.sub = 0.8) #sans" and "mono
-
 plot(G_asd_bon, 
      vertex.size = 12, 
      vertex.color = "royalblue",
@@ -359,7 +344,6 @@ plot(G_asd_bon,
      main = "Correlation Graph ASD",
      sub = "Bonferroni adjustment"
 )
-
 plot(G_td_bon, 
      vertex.size = 12, 
      vertex.color = "royalblue",
@@ -394,13 +378,19 @@ my.cor.dif.test <- function(x1, y1, x2, y2, r0, conf.level = 0.95) {
   r1 <- cor(x1, y1)
   r2 <- cor(x2, y2)
   
+  if (r2 > r1) {
+    tp <- r1
+    r1 <- r2
+    r2 <- tp 
+  }
+  
   z1 <- atanh(r1)
   z2 <- atanh(r2)
   var1 <- (1 / (n1 - 3)) 
   var2 <- (1 / (n2 - 3)) 
   sigma <- sqrt(var1 + var2) # standard error of the statistic
   
-  z.r  <- (abs(z1 - z2))
+  z.r  <- (z1 - z2)
   z.r0 <- atanh(r0)
   z <- (z.r - z.r0)/sigma
   
@@ -411,16 +401,14 @@ my.cor.dif.test <- function(x1, y1, x2, y2, r0, conf.level = 0.95) {
   list(conf.int = cint, p.value = pval)
 }
 
-
-
 my.dif.cor.mtest <- function(mat_g1, mat_g2, r0, conf.level = 0.95) 
 {
   mat_g1 <- as.matrix(mat_g1)
   mat_g2 <- as.matrix(mat_g2)
   n <- ncol(mat_g1)
   p.mat <- lowCI.mat <- uppCI.mat <- matrix(NA, n, n)
-  diag(p.mat) <- 0
-  diag(lowCI.mat) <- diag(uppCI.mat) <- 1
+  diag(p.mat) <- 1
+  diag(lowCI.mat) <- diag(uppCI.mat) <- 0
   for (i in 1:(n - 1)) {
     for (j in (i + 1):n) {
       tmp <- my.cor.dif.test(x1 = mat_g1[, i], y1 = mat_g1[, j],
@@ -437,24 +425,70 @@ my.dif.cor.mtest <- function(mat_g1, mat_g2, r0, conf.level = 0.95)
 }
 
 
-# Difference between Correlation: with and without Bonferroni -------------
+# Difference between Correlation: without control -------------
 
-th <- 0.21
-
-# without control
 dif_multi <- my.dif.cor.mtest(asd_mean, td_mean, r0 = th)
 dif.pmat <- dif_multi$p
 sum(dif_multi$p < alpha)
 sum(dif_multi$lowCI > th)
 
-# Bonferoni control
+# which edges are linked
+dif.low <- dif_multi$lowCI
+dimnames(dif.low) <- dimnames(cor.mat)
+dif.low[lower.tri(dif.low, diag = T)] <- 0 
+idx.nc <- which(dif.low > th, arr.ind=TRUE)
+edges.nc <- cbind(rownames(dif.low)[idx[,"row"]], colnames(dif.low)[idx[,"col"]])
+edges.nc.labels <- apply(X = edges.nc, MARGIN = 1, function(x) paste(x[1], x[2], sep = "-"))
+
+results.no.control <- data.frame(
+  edges = edges.nc.labels,
+  corr_ASD = round(asd.cor.mat[idx.nc],3),
+  corr_TD = round(td.cor.mat[idx.nc],3),
+  delta_corr = round(delta.corr.mat[idx],3),
+  delta_CI95_low = round(dif.low[idx],3)
+)
+
+results.no.control
+
+# Difference between correlation: Bonferoni Control -----------------------
+
+th <- 0.21
 t_bonf <- (alpha/m)
 dif_bon_multi <- my.dif.cor.mtest( asd_mean, td_mean, r0 = th, conf.level = 1 - (alpha/m))
 dif.bon.pmat <- dif_bon_multi$p
+D.bon.lowCI <- dif_bon_multi$lowCI
+dimnames(D.bon.lowCI) <- dimnames(cor.mat)
 
-#how many edges 
-length(setdiff(which(dif_bon_multi$p < t_bonf), diagonal_indeces))
-length(setdiff(which(dif_bon_multi$lowCI > th), diagonal_indeces))
+#which ROI are linked  
+verteces.liked.p <- which(dif_bon_multi$p < t_bonf)
+verteces.liked   <- which(dif_bon_multi$lowCI > th)
+verteces.liked.p
+verteces.liked
+
+# which edges are linked
+length(verteces.liked)
+dif.bon.low <- dif_bon_multi$lowCI
+dif.bon.low[lower.tri(dif.bon.low, diag = T)] <- 0 
+idx <- which(dif.bon.low > th, arr.ind=TRUE)
+edges.bon <- cbind(rownames(D.bon.lowCI)[idx[,"row"]], colnames(D.bon.lowCI)[idx[,"col"]])
+edges.bon
+verteces.liked.name <- union(rownames(D.bon.lowCI)[idx[,"row"]], colnames(D.bon.lowCI)[idx[,"col"]])
+edges.bon.labels <- apply(X = edges.bon, MARGIN = 1, function(x) paste(x[1], x[2], sep = "-"))
+
+#correlation matrices 
+#difference corr matrix
+asd.cor.mat <- cor(asd_mean)
+td.cor.mat <- cor(td_mean)
+delta.corr.mat <- abs(asd.cor.mat - td.cor.mat)
+
+results.bonf <- data.frame(
+  edges = edges.bon.labels,
+  corr_ASD = round(asd.cor.mat[idx],3),
+  corr_TD = round(td.cor.mat[idx],3),
+  delta_corr = round(delta.corr.mat[idx],3),
+  delta_CI_low = round(dif.bon.low[idx],3)
+)
+
 
 # Difference between correlation: Graphs ----------------------------------
 
@@ -466,126 +500,101 @@ dif_bon_adj_mat [which(dif_bon_pmat < t_bonf)] <- 1
 
 G_delta_bon <-graph_from_adjacency_matrix(dif_bon_adj_mat, mode = "undirected") 
 
+mask <- which(V(G_td_bon)$name %in% verteces.liked.name)
+vertx.size <- rep(8, 116)
+vertx.size[mask] <- 16
+
+vertx.col <- rep(rgb(0,0,1,.3), 116)
+vertx.col[mask] <- c(rgb(1,0,0,.3))
+
 plot(G_delta_bon, 
-     vertex.size = 15, 
-     vertex.color = rgb(0,0,1,.4),
+     vertex.size = vertx.size, 
+     vertex.color = vertx.col,
      vertex.shape = "circle",
-     vertex.label.cex = 1,
+     vertex.label.cex =(V(G_delta_bon)$size)/15,
      vertex.label.font = 2,
-     vertex.label.color="gold",
-     edge.width = 3, 
+     vertex.label.color="black",
+     edge.curved=0.2,
+     edge.width = 4, 
      edge.color = "darkgreen",
      curved = TRUE, 
      main = "Difference Correlation Graph",
      sub = "Bonferroni adjustment",
-     frame = T
+     frame = T,
+     vertex.frame.color = vertx.col
 )
+# vertex.label.dist=1.4
 
-#vertices adjacent to at least one edge
-vadj <- V(G_delta_bon) [ adj(E(G_delta_bon)) ]
-G_delta_bon[vadj]$color <- "darkred"
-set_vertex_attr(G_delta_bon, "color", index = vadj, "darkred")
-colrs <- 
+# 3 graph plot 
+
+mask <- which(V(G_td_bon)$name %in% verteces.liked.name)
+vertx.size <- rep(6, 116)
+vertx.size[mask] <- 16
+
+labels <- V(G_asd_bon)$name
+vertx.label <- rep(NA, 116)
+vertx.label[mask] <- labels[mask]
+
+vertx.col <- rep(rgb(0,0,1,.3), 116)
+vertx.col[mask] <- c(rgb(1,0,0,.3))
+  
 par(mfrow=c(1,3),  mar=c(1,1,1,1), family = "sans", font.sub = 2, cex.sub = 0.8)
 
+plot(G_asd_bon, 
+     vertex.size = vertx.size, 
+     vertex.shape = "circle",
+     vertex.label = vertx.label,
+     vertex.label.cex = 1,
+     vertex.label.font = 2,
+     vertex.label.color="black",
+     vertex.color = vertx.col,
+     edge.curved=0.2,
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "ASD Correlation Graph",
+     sub = "Bonferroni adjustment",
+     frame = T,
+     vertex.frame.color = vertx.col
+)
+
 plot(G_td_bon, 
-     vertex.size = 10, 
-     vertex.color = "gold",
-     vertex.shape = "sphere",
-     vertex.label.cex = 0.8,
+     vertex.size = vertx.size, 
+     vertex.shape = "circle",
+     vertex.label = vertx.label,
+     vertex.label.cex = 1,
      vertex.label.font = 2,
-     vertex.label.color=grey(level = .9),
+     vertex.label.color="black",
+     vertex.color = vertx.col,
+     edge.curved=0.2,
      edge.width = 2, 
      edge.color = "darkgreen",
      curved = TRUE, 
-     main = "TD Correlation",
+     main = "TD Correlation Graph",
      sub = "Bonferroni adjustment",
-     frame = T
+     frame = T,
+     vertex.frame.color = vertx.col
 )
-plot(asd_graph_bon, 
-     vertex.size = 10, 
-     vertex.color = "royalblue",
-     vertex.shape = "sphere",
-     vertex.label.cex = 0.8,
+
+plot(G_delta_bon, 
+     vertex.size = vertx.size, 
+     vertex.shape = "circle",
+     vertex.label = vertx.label,
+     vertex.label.cex = 1,
      vertex.label.font = 2,
-     vertex.label.color=grey(level = .9),
+     vertex.label.color="black",
+     vertex.color = vertx.col,
+     edge.curved=0.2,
      edge.width = 2, 
      edge.color = "darkgreen",
      curved = TRUE, 
-     main = "ASD Correlation",
+     main = "Difference Correlation Graph",
      sub = "Bonferroni adjustment",
-     frame = T
-)
-plot(dif_graph_bon, 
-     vertex.size = 10, 
-     vertex.color = "royalblue",
-     vertex.shape = "sphere",
-     vertex.label.cex = 0.8,
-     vertex.label.font = 2,
-     vertex.label.color=grey(level = .9),
-     edge.width = 2, 
-     edge.color = "darkgreen",
-     curved = TRUE, 
-     main = "Difference Correlation",
-     sub = "Bonferroni adjustment",
-     frame = T
+     frame = T,
+     vertex.frame.color = vertx.col
 )
 
 par(mfrow=c(1,1))
 
-length(E(td_graph_bon))
-length(E(asd_graph_bon))
-length(E(dif_graph_bon))
-E(dif_graph_bon)
-
-G_TD <- subgraph.edges(td_graph_bon, eids = E(td_graph_bon))
-G_ASD <- subgraph.edges(asd_graph_bon, eids = E(asd_graph_bon))
-G_diff <- subgraph.edges(dif_graph_bon, eids = E(dif_graph_bon))
-G_dif <- induced_subgraph(dif_graph_bon, vert_ids, impl = "copy_and_delete")
-
-V(G_dif)$names <- 
-colrs <- c ("lightblue", "gold")
-
-vert_ids <- c(4,10,35,87,88,97)
-V(G_TD)$color <- colrs[1]
-V(G_TD)[vert_ids]$color <- colrs[2]
 
 
-V(asd_graph_bon)$color <- colrs[1]
-V(asd_graph_bon)[vert_ids]$color <- colrs[2]
-
-par(mfrow=c(1,3))
-plot(G_TD,
-     vertex.size = 13, 
-     vertex.color = V(G_TD)$color,
-     vertex.shape = "circle",
-     vertex.label.cex = 0.9,
-     vertex.label.font = 2,
-     vertex.label.color=grey(level = .1),
-     edge.width = 2, 
-     edge.color = "darkgreen",
-     curved = TRUE)
-
-plot(asd_graph_bon,
-     vertex.size = 13, 
-     vertex.color = V(asd_graph_bon)$color,
-     vertex.shape = "circle",
-     vertex.label.cex = 0.9,
-     vertex.label.font = 2,
-     vertex.label.color= "black",
-     edge.width = 2, 
-     edge.color = "darkgreen",
-     curved = TRUE)
-plot(G_dif,
-     vertex.size = 10, 
-     vertex.color = "gold",
-     vertex.shape = "circle",
-     vertex.label.cex = 0.8,
-     vertex.label.font = 2,
-     vertex.label.color=grey(level = .1),
-     edge.width = 2, 
-     edge.color = "darkgreen",
-     curved = TRUE)
-par(mfrow=c(1,1))
-V(G_diff)
-E(G_diff)
