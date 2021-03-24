@@ -13,4 +13,4 @@ The aim of the project is to compare two classes of subjects and determine if th
 
 All information on dataset and project delivery are present in the pdf file.
 
-The project and the results can be read in the .html file or visible [here]() 
+The project and the results can be read in the .html file or visible [here.](https://htmlpreview.github.io/?https://github.com/AlessandradellaFazia/Association-Graphs/blob/main/dellaFazia_Castaldo.html) 
