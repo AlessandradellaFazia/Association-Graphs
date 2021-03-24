@@ -1,0 +1,1593 @@
+---
+title: "Connect your brain"
+author: "della Fazia Alessandra, Castaldo Nello"
+date: "20/2/2021"
+output: html_document
+---
+
+---
+references:
+
+- id: Ruscio
+  title: Constructing Confidence Intervals for Spearman’s Rank Correlation with Ordinal Data
+  author: 
+  - family: John Ruscio
+    given: 
+  issued:
+    year: 2008
+    month: 10
+    
+- id: LehGor
+  title: Correlation Coefficients Mean Bias and Confidence Interval Distortions
+  author: 
+  - family: Richard L. Gorsuch
+    given: Curtis S. Lehmann
+  issued:
+    year: 2010
+
+- id: Wilcox
+  title: Comparing Pearson Correlation Dealing with Heteroscedasticity and Non-Normality
+  author: 
+  - family: Rand R. Wilcox
+    given: 
+  issued:
+    year: 2009
+    month: 8 
+
+- id: boot
+  title: Bootstrapping to Test for Nonzero Population Correlation Coefficients Using Univariate Sampling
+  author: 
+  - family: William Howard Beasley
+    given: Lise DeShea
+  issued:
+    year: 2007
+
+- id: twopcor
+  title: R/twopcor.R
+  author: 
+  - family: Rand R. Wilcox
+    given: 
+  issued:
+  url : https://rdrr.io/rforge/WRS2/
+    
+
+nocite: '@*'
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packeges, include=FALSE}
+library(viridis, quietly = T)
+require(hrbrthemes, quietly = T)
+require(tidyverse, quietly = T)
+require(igraph, quietly = TRUE)
+require(ggplot2)
+require(data.table, quietly = T)
+require(GGally)
+require("coxed")
+library(network)
+library(sna)
+```
+
+## Abstract 
+
+Interesting techniques shape the brain like a network. 
+
+Comparing the structure of the networks of two different populations, in particular, a population of patients affected by a mental disorder and a population of healthy individuals, the aim of the project is to identify structures that can be associated with mental dysfunctions.
+
+## Brief Introduction 
+
+In our brain the neurons constantly vary their activity as we perform different tasks.
+
+The brain is made up of specialized regions, called regions of interest (*ROI*), whereby different activities such as looking, touching, reading, memorizing, are characterized by different patterns of activity.
+
+_Functional Magnetic Resonance Imagigng fMRI_ is a technique for meausuring and mapping the brain activity and it is widely used to understand how the brain works and to see how the brain can be damaged by diseases. _fMRI_ are time series of the level of activity of the neurons of the brain.
+
+Observing activation patterns, it is possible to modelled the neural connections as a network, where the nodes are the ROIs and the edges represent an association between time series of activity between the ROIs it self.
+
+By measuring the level of association between the time series between two regions, we create a link between the Regions if a strong correlation is observed, in symbol $$|\rho(i,j)| > t$$
+where $\rho$ is a correlation measure, t is a specific threshold (a parameter to choose). 
+
+## Dataset
+
+We are given a dataset consisting of two populations ASD, patients suffering from _Autism Spectrum Disorder_ (ASD) and _Typically Developed_ (TD) the healty group. Each of them is made up of 12 subjects.
+Each subject is a 116 x 145 dataframe, where 116 are the brain regions (ROI) and 145 are the observations for each of ROI.
+
+## Association Graphs
+
+Our task is to determine two graphs $G_{ASD}(t)$ and $G_{TD}(t)$ characterizing the ASD and the TD group respectively. Then our statistical goal is to check (from data) if and how $G_{ASD}(t)$ differs from $G_{TD}(t)$ at a prefixed threshold t. After choosing a association measure $\rho$ and threshold
+t, we define the difference graph $G^{\Delta}(t)$  made of 116 nodes (ROIs), where we put an edges between two ROIs $i$ and $j$ if $$|\rho_{i,k}^{ASD} - \rho_{i,k}^{ASD}| > t$$.
+
+
+
+## Data Exploration 
+
+### ASD group
+
+Each ROI is identified by a number ("2001", "2002", "2101", "8211", "9051" ecc) that we will called _ROI IDs_. We identified each _subject_ by a name (from _subj_01_ to _subj_12_).
+
+```{r Data Exploration: rename}
+load("C:/Users/Alessandra/Desktop/sds/HW3/hw3_data.RData")
+
+#rename the name of the subjects for convenience 
+names(asd_sel) <- c(paste("subj", seq(1,9), sep = '_0'), 
+                    paste("subj", seq(10,12), sep = '_'))
+
+names(td_sel) <- c(paste("subj", seq(1,9), sep = '_0'), 
+                    paste("subj", seq(10,12), sep = '_'))
+
+```
+
+Every _subject_ is characterized by a dataframe of 116 columns (the ROIs), and each column is made by 145 obsservations (instant of the time series associated with the ROIs) that we will treat as IIDs random variables.
+
+```{r head, echo=TRUE,warning=FALSE,message=FALSE}
+(asd_sel[[1]])[1:5, 1:5]
+
+```
+
+We start by looking at the range of each ROIs (columns).
+
+SO we compute, for each subject, and for each ROI, the maximum and minimum value observed in the ROIs.
+
+For clarity of representation below we print out only a sample for 8 ROIs per subjects, of the results obtained.
+
+```{r Data Exploration: ASD subjects}
+
+#build a dataframe of min and max values for all the region
+# for all the 12 subjects
+
+range_dataframe <- function(data_frame) {
+  #given a df of m columns and n rows return a df with 2 columns and
+  #m columns, containing the min and max values of each column
+  return (data.frame(min = sapply(data_frame, min), max = sapply(data_frame, max)))
+}
+
+range_all_subjects <- lapply(asd_sel, range_dataframe)
+range_all_subjects_df <- data.frame(range_all_subjects)
+
+
+#sample 8 regions to print out, for tidiness
+indeces.samples <- sample(nrow(range_all_subjects_df), size = 8, replace = F)
+range_all_subjects_df[indeces.samples, ]
+
+```
+
+The indeces to the righ are the 8 _ROI IDs_. We see how the first subject ASD (the first and second column subj_01.min and subj_01.max), in all the ROIs, presents a range from about -1 to 3, while the ROIs of others subjects range typically from -4000 to 5000, in all regions.
+
+Let us look at this graphically, with a graph showing the time series associated with the region "2001", for each subject. In the spaghetti plot, the _subj_01_ appears as a flat line at level 0, differently from the other subjects signals.
+
+```{r pressure, echo=TRUE,warning=FALSE,message=FALSE}
+#extract the ROI n°1 from all the subjects
+get_roi <-function(dataframe, roi_id) {
+  return(dataframe[, roi_id])
+}
+
+#dataframe that contains the only ROI NUMBER 1 of all the 
+#subject. 12 columns x 145 obs
+roi1_all_subjects <- data.frame(sapply(asd_sel, get_roi, 1))
+
+#add the times column, a numeric column of values from 1 to 145
+roi1_all_subjects <- cbind(times = seq(1:145), roi1_all_subjects)
+
+#pivoting the dataframe to make a plot
+roi1_all_subjects_long <- roi1_all_subjects %>% 
+  pivot_longer(names(roi1_all_subjects)[-1], names_to = "subject_ID", values_to = "values")
+
+#spaghetti plot of the ROI 2001 of 12 subjects
+roi1_all_subjects_long %>%
+  ggplot( aes(x=times, y=values, group=subject_ID, color=subject_ID)) +
+  geom_line(size = 0.8) +
+  scale_color_viridis(discrete = TRUE) +
+  theme(
+    legend.position="none",
+    plot.title = element_text(size=14)
+  ) +
+  ggtitle("A spaghetti plot of Region of Interest \"2001\" of the 12 subjects ASD") + 
+  theme_ipsum()
+```
+
+Let's see again the signal relative to the "2001" region only (since in the dataframe we have contrasted a similar behavior for the other regions), but now we highlight each of the 12 subjects in a reserved plot.
+
+We note how the first subject (first plot at the top left) presents a null signal compared to the others.
+
+``` {r, warning= FALSE, message = FALSE}
+#plot of the ROI "2001" of 12 subjects with individual subject highlighted
+tmp <- roi1_all_subjects_long %>%
+  mutate(name2=subject_ID)
+
+tmp %>%
+  ggplot( aes(x=times, y=values)) +
+  geom_line( data=tmp %>% dplyr::select(-subject_ID), aes(group=name2), color="grey", size=1, alpha=0.5) +
+  geom_line( aes(color=subject_ID), color="#69b3a2", size= 1.1)+
+  scale_color_viridis(discrete = TRUE) +
+  theme_ipsum() +
+  theme(
+    legend.position="none",
+    plot.title = element_text(size=11),
+    panel.grid = element_blank(),
+      axis.title.x = element_text(margin = margin(t = -30)),
+      axis.title.y = element_text(margin = margin(r = -40))
+  ) +
+  labs(title = "Region of Interest \"2001\" of the 12 ASD subjects") +
+  facet_wrap(~subject_ID)
+
+```
+
+
+We conclude the _subject 01_ is probabily an outlier.
+
+
+### TD group
+
+Also for the TD population we will see the range of the observations of the ROIs, showing again a sample of 8 regions per subject.
+
+``` {r, warning= FALSE}
+
+#min e max value in all the ROI of all the TD subjects
+range_all_subjects_TD <- lapply(td_sel, range_dataframe)
+range_all_subjects_TD_df <- data.frame(range_all_subjects_TD)
+
+#sample 8 regions per subject to print out, for tidiness
+range_all_subjects_TD_df[sample(nrow(range_all_subjects_df),8, replace = F), ]
+```
+
+We note as the _subject 01_ and _subject 02_ have a null signal.
+
+We highlight this with a box plot, but this time we condense all the observations of all the ROIs relating to a subject. In other words, all the regions have been used and all the observations are consider in the plot. 
+
+In the boxplot we clearly see how the first two subjects can be considered outliers, beacause they do not show any observation significantly different from 0.
+
+``` {r TD data exploration, warning= FALSE}
+#function that merge all the columns (ROI's) in a sigle column
+flat_df <- function(data_frame, name) {
+  return (data.frame(name = c(t(data_frame)), stringsAsFactors=FALSE))
+}
+
+#flat all the TD subjects
+m <- mapply(flat_df, td_sel, names(td_sel))
+all_ROI_per_subjects <- data.frame(m)
+
+#rename the subjects for convenience
+names(all_ROI_per_subjects) <- names(td_sel)
+
+#pivot just for plot with ggplot
+subjects_ROI <- all_ROI_per_subjects %>%
+  pivot_longer(names(all_ROI_per_subjects), names_to = "subjects", values_to = "ROI_values")
+
+#Boxplot
+
+subjects_ROI %>%
+  ggplot( aes(x=subjects, y=ROI_values, fill=subjects)) +
+  geom_boxplot() +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  theme_ipsum() +
+  theme(
+    legend.position="none",
+    plot.title = element_text(size=10)
+  ) +
+  labs(title = "What is the range of values of each subject's time series",
+       caption = "Boxplot built considering all the obsersations") +
+  xlab("subjects") + 
+  ylab("")
+
+``` 
+
+We so decided to discard the first subject of the ASD group, and the first and second subjects of the TD group. 
+
+From this point forward we no longer consider these subjects. 
+
+``` {r discard outliers, warning= FALSE}
+
+#not consider outliers 
+asd <- asd_sel[-1]
+td  <- td_sel[c(-1,-2)]
+```
+
+
+## Determination of the threshold 
+
+Let $\rho$ be the Pearson correlation. We set the threshold t equal to the 80th percentile of the correlation values observed in the two groups.
+
+We start computing all the correlations of the ASD group, that is we compute 11 matrices (one per subject escluding the outlier), each of them is 116 x 116, where 116 is the number of the feautures (ROI). For each matrices, we then take one correlation per each pairs of ROI, taking only the elements below the diagonal, (since the correlation matrices are simmetric), we then concatenate all the correlation observed in the 11 subjects.
+In the end we make an histogram of the correlation observed. 
+
+``` {r ASD corr, echo = TRUE, warning= FALSE, message = FALSE}
+
+asd.cor <- lapply(asd, cor) # 11 matrices 116x116
+
+#take only the elements below the diag and concat the data
+corr.obs.asd <- c(sapply(asd.cor, function(x) x[lower.tri(x)], simplify = T))
+
+hist(corr.obs.asd, probability = T, col = "orange", border = "white", 
+     main = "Histogram of correlation observed in the TD Group",
+     xlab = expression(rho[ASD]))
+
+round(summary(corr.obs.asd),3)
+```
+
+Now for the TD group as above:
+
+``` {r TD corr, echo = TRUE, warning= FALSE, message = FALSE}
+
+td.cor <- lapply(td, cor) # 10 matrices 116x116
+corr.obs.td <- c(sapply(td.cor, function(x) x[lower.tri(x)], simplify = T))
+
+hist(corr.obs.td, probability = T, col = "steelblue", border = "white", 
+     main = "Histogram of correlation observed in the TD Group",
+     xlab = expression(rho[TD]))
+
+round(summary(corr.obs.td),3)
+```
+
+
+We now concatenate the observed correlations of the two groups together and we pick as threshold the 80th percentile:
+
+``` {r corr overall, echo = TRUE, warning= FALSE, message = FALSE}
+
+#union of the data 
+corr.obs <- c(corr.obs.asd, corr.obs.td)
+
+hist(corr.obs, probability = T, col = "purple", border = "white", 
+     xlab = "correlation",
+     main = "Histogram of the overall correlation values observed",
+     sub = "(in yellow the 80th percentile)")
+
+th <- quantile(corr.obs, probs = 0.80)
+th <- round(th, 2)
+abline(v = th, lwd = 2, col = "yellow")
+points(x = th, y = - 0.06, pch = 21, col = "black", bg = "yellow")
+text(x = th + 0.06,y = 0.06, labels = "0.21", col = "yellow", cex = 0.9,
+     font = 2)
+cat("Threshold fixed at:", round(th,3))
+```
+
+We note how the distribution of the Pearson corellation is skewed, a fact that will return later.
+
+## Pooling together the data: The Mean
+
+Since we want obtain a sigle graph to the ASD $G_{ASD}$, and a graph to the TD group $G_{TD}$, we need to pool together the data of subjects belowing to the same group.
+
+Our choice was the sample mean. The motivation are: it is widely used in statistics as summaries of a population and it is easy to compute.
+
+As known, the main disadvantage is that it does not work well in the presence of outliers, but we have removed them previously. 
+
+In the original dataset, each subject has 116 regions x 145 observations (145 time instants for each region). As result of this "pooling procedure" will be a single subject, also characterized by 116 regions x 145 observations.
+
+So, in making the average between the subjects we are careful in averaging between corresponding instants of time (i.e. the average of the first instant of the first region of the subjects will be the first instant of the first region of the result, the second instant of the first region of the subjects will be the second instant of the first region of the result, etc ...)
+
+
+``` {r pooling: mean, echo = TRUE, warning= FALSE, message = FALSE}
+
+for (i in 1 : length(asd)) {
+  asd[[i]] <- cbind(index = seq(1, 145), asd[[i]])
+}
+
+# build a dataframe containg the average of the original cells, 
+# combining the cells with the same index and same roi
+asd_mean <- rbindlist(asd)[,lapply(.SD,mean), index]
+
+#remove the index column
+asd_mean <- subset(asd_mean, select = -c(index))
+
+#rename the subjects TD 
+names(td_sel) <- c(paste("subj", seq(1,9), sep = '_0'), 
+                    paste("subj", seq(10,12), sep = '_'))
+
+#not consider the two outliers 
+td <- td_sel[c(-1,-2)]
+
+#add a column called index, with number from 1 to 145
+for (i in 1 : length(td)) {
+  td[[i]] <- cbind(index = seq(1, 145), td[[i]])
+}
+
+# build a dataframe containg the average of the original cells, 
+# combining the cells with the same index and same roi
+td_mean <- rbindlist(td)[,lapply(.SD,mean), index]
+
+#remove the index column
+td_mean <- subset(td_mean, select = -c(index))
+
+```
+
+Dimension of the dataframe resulting for the ASD: 
+
+``` {r pooling dim2: result, echo = TRUE, warning= FALSE, message = FALSE}
+dim(asd_mean)
+``` 
+
+First 5 columns and 5 rows of the result, for the ASD.
+
+``` {r pooling: result, echo = TRUE, warning= FALSE, message = FALSE}
+asd_mean[1:5, 1:5]
+``` 
+
+Dimension of the dataframe resulting for the TD: 
+
+``` {r pooling dim: result, echo = TRUE, warning= FALSE, message = FALSE}
+dim(td_mean)
+```
+
+First 5 columns and 5 rows of the result, for the TD.
+
+``` {r pooling: result2, echo = TRUE, warning= FALSE, message = FALSE}
+td_mean[1:5, 1:5]
+``` 
+
+
+
+## Confidence Interval and Bonferroni Correction
+
+In order to test is $|\rho| > t$ we build a confidence interval $C_{j,k}(\alpha)$ for $(j, k)$, and then we place an edge between feature j and feature k if $[−t,+t] \cap C_{j,k}(\alpha) = \emptyset$.
+
+We first build a confidence set without controlling for multiplicity, and so we fix the significance level $\alpha$ to 0.05.
+
+Since will test multiple hypothesis, the chance of observing a rare event increases, and therefore, the likelihood of incorrectly rejecting a null hypothesis, increases.
+
+The Bonferroni correction compensates for that increase by testing each individual hypothesis at a significance level of $\frac{\alpha}{m}$, where $\alpha$ is the desired overall type I error probability and m is the number of hypothesis, that is $m =$ ${116}\choose{2}$ $= 6670$.
+
+Hence, we build a confidence sets at level $1 - \frac{\alpha}{m}$, where $\alpha$ is 0.05.
+
+Since we want test is $|\rho| > t$ we consider a sigle-sided confidence interval, and testing if $[−t,+t] \cap C_{j,k}(\alpha) = \emptyset$ consist in checking the lower extreme of the confidence interval is less than the threshold.
+
+### Confidence Interval: Fisher Z Transform
+
+We said we want to test the statistical significance of Pearson correlation cofficent $\rho$. However the variance of $\rho$ is complex.
+Techniques have been developed to estimate the variance, applied specific trasformation, such that, when transformed back into original units, the coverage of CIs constructed in this manner will approximate the nominal level. One of the them is the Fisher trasform. After Fisher-transforming $\rho$, where $$z = atanh(\rho)$$ 
+the estimate of the variance of $z$ is $$\sigma^2 = \frac{1}{(N – 3)}$$
+
+With this estimate of the sampling error of z, and the assumption that these errors are normally distributed, one can construct a CI as follows:
+
+$$ CI = tanh[z - \sigma \times z_{\frac{\alpha}{2}}, z + \sigma \times z_{(1 - \frac{\alpha}{2})} ]$$
+where  $z_{\frac{\alpha}{2}}$ is the percentile point of a standard normal distribution below which the
+subscripted proportion of scores lies. And in the case of _unilateral confidence interval_ we said $$ CI = tanh[z - \sigma \times z_{\alpha}, +\infty ]$$
+
+Since our goal is to test if $|\rho| > t$, we build a _unilateral confidence interval_.
+
+*Null hypothesis:* $|\rho| < t$
+*Alternative hypothesis:* $|\rho| \geq t$
+
+with $t > 0$.
+
+Therefore, checking if $[−t,+t] \cap C_{j,k}(\alpha) = \emptyset$ constits is verifying if low extreme of the confidence interval is less that the threshold $t$.
+
+In order to do that, we look at the function of R _cor.test_ ,that compute a test of the value being zero, and we have adapted it to test a value strictly greater than 0.
+
+``` {r cor test functions, echo = TRUE, warning= FALSE, message = FALSE}
+my.cor.test <- function(x,y, r0, conf.level = 0.95) {
+  #r0 is the correlation according to null hypothesis
+  n <- length(x)
+  r <- cor(x, y)
+  
+  r <- abs(r) #test is |r| > r0
+  z.r <- atanh(r)
+  z.r0 <- atanh(r0)
+  sigma <- 1 / sqrt(n - 3)
+  z <- (z.r - z.r0)/sigma
+  
+  cint <- c(z.r - sigma * qnorm(conf.level), Inf) #single sided CI
+  cint <- tanh(cint)
+  pval <- pnorm(z, lower.tail=FALSE)
+  
+  list(conf.int = cint, p.value = pval)
+}
+``` 
+
+
+The function _my.cor.mtest_ make a significance test which produces p-values and confidence intervals for each pair of input features, calling our function _my.cor.test_. Also here too we have based on the code of R  _cor.mtest_.
+
+``` {r cor multitest functions, echo = TRUE, warning= FALSE, message = FALSE}
+my.cor.mtest <- function(mat, r0, conf.level = 0.95) 
+{
+  mat <- as.matrix(mat)
+  n <- ncol(mat)
+  p.mat <- lowCI.mat <- uppCI.mat <- matrix(NA, n, n)
+  diag(p.mat) <- 1
+  diag(lowCI.mat) <- diag(uppCI.mat) <- 0
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      tmp <- my.cor.test(x = mat[, i], y = mat[, j], r0 = r0, conf.level = conf.level)
+      p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+      if (!is.null(tmp$conf.int)) {
+        lowCI.mat[i, j] <- lowCI.mat[j, i] <- tmp$conf.int[1]
+        uppCI.mat[i, j] <- uppCI.mat[j, i] <- tmp$conf.int[2]
+      }
+    }
+  }
+  list(p = p.mat, lowCI = lowCI.mat, uppCI = uppCI.mat)
+}
+```
+
+
+
+We first determinate the two population graphs, without controlling for multiplicity, setting the confidence level at 0.95.
+
+The result:
+
+``` {r cor test ASD, echo = TRUE, result = 'asis', message = FALSE}
+
+#116x116 corelation matrix
+cor.mat <- cor(td_mean)
+cor.asd.matrix <- cor(asd_mean)
+
+alpha <- 0.05
+n <- ncol(asd_mean)
+m <- choose(n, 2) # binomial coefficients: number of pairs
+th <- 0.21 #threshold 
+
+asd_multi_matrix <- my.cor.mtest(asd_mean, r0 = th, conf.level = 0.95)
+
+cat("ASD group \n")
+cat("Number of edges setting p-value < alpha \n")
+asd_edges_index <- which(asd_multi_matrix$p < alpha)
+length(asd_edges_index)/2
+cat("\n") 
+
+cat("some indeces according to the test on the pvalue: \n")
+head(asd_edges_index, n = 50)
+cat('\n')
+
+cat("Number of edges cheching which confidence intervals does not intersect [-t, +t] \n")
+asd_index <- which(th < asd_multi_matrix$lowCI)
+length(asd_index)/2
+cat('\n')
+
+cat("some indeces according to the test on the confidence interval\n")
+head(asd_index, n = 50)
+```
+
+As expected, there are perfect equivalence between verifying the value of the _pvalue_ and the confidence interval.
+
+``` {r cor test TD, echo = TRUE, warning= FALSE, message = FALSE, result = 'asis'}
+
+# TD SUBJECTS
+td_multi_matrix <- my.cor.mtest(td_mean, r0 = th, conf.level = 0.95)
+td_edges_index <- which(td_multi_matrix$p < alpha)
+cat('\n')
+
+cat("TD group \n")
+cat("Number of edges setting p-value < alpha : \n")
+length(td_edges_index)/2
+
+cat("some indeces according to the test on the pvalue:\n")
+head(td_edges_index, n = 50)
+cat('\n')
+
+cat("Number of edges cheching which confidence intervals does not intersect [-t -t]: \n")
+td_index <- which(th < td_multi_matrix$lowCI)
+length(td_index)/2
+cat("\n")
+
+cat("some indeces according to the confidence intervals:")
+head(td_index, n = 50)
+
+```
+
+We proceed now with the *Bonferroni control*: setting as condition of significance:
+
+- level of confidence of the intervals: $1 - \frac{\alpha}{m}$
+or equivalently
+- $p_{value} < \frac{\alpha}{m}$
+
+
+``` {r bonferroni, echo = TRUE, warning= FALSE, message = FALSE, result = 'asis'}
+t_bonf <- alpha/m
+bon_asd_edges_index <- which(asd_multi_matrix$p < alpha/m)  # the p value not depens on conf.level
+
+cat("ASD subject: \n")
+cat("Number of edges testing p-value (bonferroni correction): \n")
+length(bon_asd_edges_index)/2
+cat('\n')
+
+bon_asd_multi_matrix <- my.cor.mtest(asd_mean, r0 = th, conf.level = 1 - (alpha/m))
+
+cat("Number of edges testing the confidence interval (bonferroni correction: \n")
+bon_asd_index <- which(th < bon_asd_multi_matrix$lowCI)
+length(bon_asd_index)/2
+cat("\n")
+ 
+cat("TD Subject: \n")
+cat("Number of edges testing p-value (bonferroni correction) : \n")
+bon_td_edges_index <- which(td_multi_matrix$p < alpha/m)  
+length(bon_td_edges_index) /2
+cat("\n")
+
+bon_td_multi_matrix <- my.cor.mtest(td_mean, r0 = th, conf.level = 1 - (alpha/m))
+
+cat("Number of edges testing the confidence interval (bonferroni correction:\n")
+bon_td_index <- which(th < bon_td_multi_matrix$lowCI)
+length(bon_td_index)/2
+```
+
+
+We proceed now building the confidence intervals of the difference between the correlations relatives to same ROIs of different group. 
+
+
+For testing the difference between to correlation $\rho1$ and $\rho2$ we proceed as follow:
+
+- transform the correlations using the Fisher-z transformation, $z1 = atanh(\rho1)$ and $z2 = atanh(\rho2)$
+- The standard deviation of the difference is given by $$\sigma = \sqrt{2 \frac{1}{N - 3} }$$
+- Build the CI at prefixed level as before.
+
+Below the definition of the functions used:
+
+``` {r difference function definition, echo = TRUE, warning= FALSE, message = FALSE}
+my.cor.dif.test <- function(x1, y1, x2, y2, r0, conf.level = 0.95) {
+  #r0 is the correlation according to null hypothesis
+  #x1 : value x of group 1   #y1 : value y of group 1 
+  #x2 : value x of group 2   #y2 : value y of group 2
+  
+  n1 <- length(x1)
+  n2 <- length(x2)
+  r1 <- cor(x1, y1)
+  r2 <- cor(x2, y2)
+  
+  if (r2 > r1) {
+    tp <- r1
+    r1 <- r2
+    r2 <- tp 
+  }
+  
+  z1 <- atanh(r1)
+  z2 <- atanh(r2)
+  var1 <- (1 / (n1 - 3)) 
+  var2 <- (1 / (n2 - 3)) 
+  sigma <- sqrt(var1 + var2) # standard error of the statistic
+  
+  z.r  <- (z1 - z2)
+  z.r0 <- atanh(r0)
+  z <- (z.r - z.r0)/sigma
+  
+  cint <- c(z.r - sigma * qnorm(conf.level), Inf)
+  cint <- tanh(cint)
+  pval <- pnorm(z, lower.tail=FALSE)
+  
+  list(conf.int = cint, p.value = pval)
+}
+```
+
+```{r dif cor mtest, echo = TRUE, warning= FALSE, message = FALSE} 
+
+my.dif.cor.mtest <- function(mat_g1, mat_g2, r0, conf.level = 0.95) 
+{
+  mat_g1 <- as.matrix(mat_g1)
+  mat_g2 <- as.matrix(mat_g2)
+  n <- ncol(mat_g1)
+  p.mat <- lowCI.mat <- uppCI.mat <- matrix(NA, n, n)
+  diag(p.mat) <- 1
+  diag(lowCI.mat) <- diag(uppCI.mat) <- 0
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      tmp <- my.cor.dif.test(x1 = mat_g1[, i], y1 = mat_g1[, j],
+                             x2 = mat_g2[, i], y2 = mat_g2[, j],
+                             r0 = r0, conf.level = conf.level)
+      p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+      if (!is.null(tmp$conf.int)) {
+        lowCI.mat[i, j] <- lowCI.mat[j, i] <- tmp$conf.int[1]
+        uppCI.mat[i, j] <- uppCI.mat[j, i] <- tmp$conf.int[2]
+      }
+    }
+  }
+  list(p = p.mat, lowCI = lowCI.mat, uppCI = uppCI.mat)
+}
+``` 
+
+The Results.
+Below we see the number of edges in the graph of the difference between the association graph of the two population without the Bonferroni control: 
+
+``` {r result diff no control, echo = TRUE, warning= FALSE, message = FALSE, result = 'asis'}
+
+asd.cor.mat <- cor(asd_mean)
+td.cor.mat <- cor(td_mean)
+delta.corr.mat <- abs(asd.cor.mat - td.cor.mat)
+
+# Difference between Correlation: without control -------------
+
+dif_multi <- my.dif.cor.mtest(asd_mean, td_mean, r0 = th)
+dif.pmat <- dif_multi$p
+
+cat("Result of the difference between correlations without control: \n\n")
+cat("Number of edges in the graph of the difference according to pvalue: \n")
+(sum(dif_multi$p < alpha))/2
+cat("\n")
+
+cat("Number of edges in the graph of the difference according to the CI \n")
+(sum(dif_multi$lowCI > th))/2
+```
+
+We show below only 20 of the 339 significative edges, with the relative correlation values, and confidence intervals: 
+
+``` {r result df diff no control3, echo = TRUE, warning= FALSE, message = FALSE}
+# which edges are linked
+dif.low <- dif_multi$lowCI
+dimnames(dif.low) <- dimnames(asd.cor.mat)
+dif.low[lower.tri(dif.low, diag = T)] <- 0 
+idx.nc <- which(dif.low > th, arr.ind=TRUE)
+edges.nc <- cbind(rownames(dif.low)[idx.nc[,"row"]], colnames(dif.low)[idx.nc[,"col"]])
+edges.nc.labels <- apply(X = edges.nc, MARGIN = 1, function(x) paste(x[1], x[2], sep = "-"))
+
+results.no.control <- data.frame(
+  edges = edges.nc.labels,
+  corr_ASD = round(asd.cor.mat[idx.nc],3),
+  corr_TD = round(td.cor.mat[idx.nc],3),
+  delta_corr = round(delta.corr.mat[idx.nc],3),
+  delta_CI95_low = round(dif.low[idx.nc],3)
+)
+
+head(results.no.control, n = 20) 
+```
+
+Also for the association graph of the difference, we proceed with the _Bonferroni Adjustment,_ building the CI at level $1 - \frac{\alpha}{m}$:
+
+``` {r result control, echo = TRUE, warning= FALSE, message = FALSE, result = 'asis'}
+# Difference between correlation: Bonferoni Control -----------------------
+
+th <- 0.21
+t_bonf <- (alpha/m)  #bonferroni threshold 
+
+dif_bon_multi <- my.dif.cor.mtest(asd_mean, td_mean, r0 = th, conf.level = 1 - (alpha/m))
+
+dif.bon.pmat <- dif_bon_multi$p #pvalues matrix
+D.bon.lowCI <- dif_bon_multi$lowCI #lower extreme of the Confidence Intervals
+dimnames(D.bon.lowCI) <- dimnames(cor.mat)
+
+
+#which ROI are linked  
+verteces.liked.p <- which(dif_bon_multi$p < t_bonf)
+verteces.liked   <- which(dif_bon_multi$lowCI > th)
+
+
+# which edges are linked
+cat("how many edges there are in the graph Delta\n")
+cat("with Bonferroni correction:\n")
+length(verteces.liked)/2
+
+```
+
+``` {r result control2, echo = TRUE, warning= FALSE, message = FALSE}
+
+dif.bon.low <- dif_bon_multi$lowCI
+dif.bon.low[lower.tri(dif.bon.low, diag = T)] <- 0 
+idx <- which(dif.bon.low > th, arr.ind=TRUE)
+edges.bon <- cbind(rownames(D.bon.lowCI)[idx[,"row"]], colnames(D.bon.lowCI)[idx[,"col"]])
+
+verteces.liked.name <- union(rownames(D.bon.lowCI)[idx[,"row"]], colnames(D.bon.lowCI)[idx[,"col"]])
+edges.bon.labels <- apply(X = edges.bon, MARGIN = 1, function(x) paste(x[1], x[2], sep = "-"))
+
+#correlation matrices 
+#difference corr matrix
+asd.cor.mat <- cor(asd_mean)
+td.cor.mat <- cor(td_mean)
+delta.corr.mat <- abs(asd.cor.mat - td.cor.mat)
+asd.result <- round(asd.cor.mat[idx],3)
+td.result <- round(td.cor.mat[idx],3)
+
+results.bonf <- data.frame(
+  ROI_IDs = edges.bon.labels,
+  corr_ASD = round(asd.cor.mat[idx],3),
+  corr_TD = round(td.cor.mat[idx],3),
+  delta_corr = round(delta.corr.mat[idx],3),
+  delta_CI_low = round(dif.bon.low[idx],3)
+)
+```
+
+After adjusting with Bonferroni, only 4 edges are significant. Infact, the Bonferroni correction it may be too conservative (leading too few discoveries).
+Below the details of the 4 edges:
+
+``` {r result control3, echo = TRUE, warning= FALSE, message = FALSE}
+results.bonf
+``` 
+
+
+#### Scatterplots of the significant egdes found
+
+We are interested in seeing the scatter plots related to the 4 nodes found in the two original groups.
+
+In the graph below, we display in the left column the data relating to the 4 ROIs pairs found, taken in the ASD subject. 
+In the right column, we see the same pairs but relative to the TD subject. 
+At the top right of each scatterplot we report the correlation value.
+We note, precisely, how there is a significant difference between the two columns. 
+
+``` {r scatterplots, echo = TRUE, warning= FALSE, message = FALSE}
+# Correlation p: Scatterplots ---------------------------------------------
+
+
+# basic scatterplot
+require("gridExtra")
+require("cowplot")
+
+data <- asd_mean%>% select(verteces.liked.name)
+names(data) <- paste(c("r"),names(data), sep="")
+data_td <- td_mean%>% select(verteces.liked.name)
+names(data_td) <- paste(c("r"),names(data_td), sep="")
+colrs <- viridis(nrow(edges.bon))
+
+new.edges <- matrix(NA, nrow = nrow(edges.bon), ncol = ncol(edges.bon))
+for (i in 1 : nrow(edges.bon)) {
+  new.edges[i,1] <- paste("r", edges.bon[i,1], sep = "")
+  new.edges[i,2] <- paste("r", edges.bon[i,2], sep = "")
+}
+
+a <- ggplot(data, aes(x=r2102, y=r2212)) + 
+  geom_point(color = colrs[1]) + 
+  ggtitle(paste("r = ", asd.result[1])) +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)),
+        axis.title.x = element_text(margin = margin(t = -30)),
+        axis.title.y = element_text(margin = margin(r = -40))
+        )
+
+b <- ggplot(data, aes(x=r2102, y=r4021)) + 
+  geom_point(color = colrs[2]) + 
+  ggtitle(paste("r = ", asd.result[2])) +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)),
+        axis.title.x = element_text(margin = margin(t = -30)),
+        axis.title.y = element_text(margin = margin(r = -40))
+  )
+ 
+c <- ggplot(data, aes(x=r8211, y=r8212)) + 
+  geom_point(color = colrs[3]) + 
+  ggtitle(paste("r = ", asd.result[3])) +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)),
+        axis.title.x = element_text(margin = margin(t = -30)),
+        axis.title.y = element_text(margin = margin(r = -40))
+  )
+d <- ggplot(data, aes(x=r8212, y=r9031)) + 
+  geom_point(color = colrs[4]) + 
+  ggtitle(paste("r = ", asd.result[4])) +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)),
+        axis.title.x = element_text(margin = margin(t = -30)),
+        axis.title.y = element_text(margin = margin(r = -40))
+  )
+
+a2 <- ggplot(data_td, aes(x=r2102, y=r2212)) + 
+  geom_point(color = colrs[1]) + 
+  ggtitle(paste("r = ", td.result[1])) +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)),
+        axis.title.x = element_text(margin = margin(t = -30)),
+        axis.title.y = element_text(margin = margin(r = -40))
+  )
+b2 <- ggplot(data_td, aes(x=r2102, y=r4021)) + 
+  geom_point(color = colrs[2]) + 
+  ggtitle(paste("r = ", td.result[2])) +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)),
+        axis.title.x = element_text(margin = margin(t = -30)),
+        axis.title.y = element_text(margin = margin(r = -40))
+  )
+c2 <- ggplot(data_td, aes(x=r8211, y=r8212)) + 
+  geom_point(color = colrs[3]) + 
+  ggtitle(paste("r = ", td.result[3])) +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)),
+        axis.title.x = element_text(margin = margin(t = -30)),
+        axis.title.y = element_text(margin = margin(r = -40))
+  )
+d2 <- ggplot(data_td, aes(x=r8212, y=r9031)) + 
+  geom_point(color = colrs[4]) + 
+  ggtitle(paste("r = ", td.result[4])) +
+  theme(plot.title = element_text(margin = margin(t = 10, b = -20)),
+        axis.title.x = element_text(margin = margin(t = -30)),
+        axis.title.y = element_text(margin = margin(r = -40))
+  )
+plot_grid(a,a2,b,b2,c,c2,d,d2, ncol = 2, nrow = 4)
+
+```
+
+
+### Graphs 
+
+We look now at the results through graphs.
+
+We build a graph relatives to the ASD subject, a graph relatives to the TD subject, and the graph based on the difference between the correlations $G^{\Delta}(t)$, with Bonferroni correction in all of them. <\br>
+
+The four ROIs that will have a significant link in the graph $G^{\Delta}(t)$ are colored red in all three graphs. Unconnected nodes are light blue instead. 
+
+``` {r graph, echo = TRUE, warning= FALSE, message = FALSE}
+
+asd_bon_pmat <- bon_asd_multi_matrix$p
+asd_bon_adj_mat <- matrix(0, nrow = n, ncol = n, dimnames = dimnames(cor.asd.matrix))
+asd_bon_adj_mat[ which(asd_bon_pmat < t_bonf) ] <- 1
+
+G_asd_bon <-graph_from_adjacency_matrix(asd_bon_adj_mat, mode = "undirected")
+
+# TD SUBJECTS 
+
+td_bon_pmat <- bon_td_multi_matrix$p
+td_bon_adj_mat <- matrix(0, nrow = n, ncol = n, dimnames = dimnames(cor.asd.matrix))
+td_bon_adj_mat[ which(td_bon_pmat < t_bonf) ] <- 1
+
+G_td_bon <-graph_from_adjacency_matrix(td_bon_adj_mat, mode = "undirected")
+dif_bon_pmat <- dif_bon_multi$p
+dif_bon_adj_mat <- matrix(0, nrow = n, ncol = n, dimnames = dimnames(cor.asd.matrix))
+dif_bon_adj_mat [which(dif_bon_pmat < t_bonf)] <- 1
+
+G_delta_bon <-graph_from_adjacency_matrix(dif_bon_adj_mat, mode = "undirected") 
+
+mask <- which(V(G_td_bon)$name %in% verteces.liked.name)
+vertx.size <- rep(8, 116)
+vertx.size[mask] <- 16
+
+vertx.col <- rep(rgb(0,0,1,.3), 116)
+vertx.col[mask] <- c(rgb(1,0,0,.3))
+
+mask <- which(V(G_td_bon)$name %in% verteces.liked.name)
+vertx.size <- rep(6, 116)
+vertx.size[mask] <- 10
+
+labels <- V(G_asd_bon)$name
+vertx.label <- rep(NA, 116)
+vertx.label[mask] <- labels[mask]
+
+vertx.col <- rep(rgb(0,0,1,.3), 116)
+vertx.col[mask] <- c(rgb(1,0,0,.3))
+  
+par(mfrow=c(1,1),  mar=c(1,1,1,1), family = "sans", font.sub = 2, cex.sub = 0.8)
+
+plot(G_asd_bon, 
+     vertex.size = vertx.size, 
+     vertex.shape = "circle",
+     vertex.label = vertx.label,
+     vertex.label.cex = 1,
+     vertex.label.font = 2,
+     vertex.label.color="black",
+     vertex.color = vertx.col,
+     edge.curved=0.2,
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "ASD Correlation Graph",
+     sub = "Bonferroni adjustment",
+     frame = T,
+     vertex.frame.color = vertx.col
+)
+
+plot(G_td_bon, 
+     vertex.size = vertx.size, 
+     vertex.shape = "circle",
+     vertex.label = vertx.label,
+     vertex.label.cex = 1,
+     vertex.label.font = 2,
+     vertex.label.color="black",
+     vertex.color = vertx.col,
+     edge.curved=0.2,
+     edge.width = 2, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "TD Correlation Graph",
+     sub = "Bonferroni adjustment",
+     frame = T,
+     vertex.frame.color = vertx.col
+)
+
+vertx.size <- rep(4, 116)
+vertx.size[mask] <- 10
+
+plot(G_delta_bon, 
+     vertex.size = vertx.size, 
+     vertex.shape = "circle",
+     vertex.label = vertx.label,
+     vertex.label.cex = 1,
+     vertex.label.font = 2,
+     vertex.label.color="black",
+     vertex.color = vertx.col,
+     edge.curved=0.2,
+     edge.width = 4, 
+     edge.color = "darkgreen",
+     curved = TRUE, 
+     main = "Difference Correlation Graph",
+     sub = "Bonferroni adjustment",
+     frame = T,
+     vertex.frame.color = vertx.col
+)
+
+par(mfrow=c(1,1))
+```
+
+### Pearson Correlation : Conclusion 
+
+Given two subjects each consisting of 116 features, we modeled each subject with a graph of 116 nodes. 
+
+As measure of association we select the Pearson correlation cofficent. 
+
+The first subject, representative of the patients affected by the disease, has 145 links. 
+
+The healthy subject has 195 connections. 
+
+In order to argue on the entire graphs, we applied the Bonferroni correction, but it can be conservative with a large number $m$ of hypothesis. 
+
+We then modeled the difference between them and found that only 4 links are significantly different. 
+
+We conclude that no substantial differences were found between the co-activation patterns of the two groups. 
+
+
+## Bootstrap Procedure for Spearman's Rank Correlation
+
+Spearman rank correlation $r_{s}$ is a nonparametric statistic that allows to describe the strenght of an association between two variables X and Y.
+
+To calculate $r_{s}$ one converts each variable to ranks, and then appling the Pearson correlation. In more details, for a sample of size n, n random variables $X_{i},Y_{i}$ are converted to ranks $rg_{X_{i}}$, $rg_{Y_{i}}$ and then $r_{s}$ is compute as $$r_{s} = \rho(rg_{X_{i}}, rg_{Y_{i}})$$ where $\rho$ indicates the Pearson Correlation. 
+
+### Why Spearman's
+
+Whereas Pearson correlation $\rho$ measures the strength of a linear relationship between X and Y, the Spearman's rank $r_{s}$ assesses how well an arbitrary monotonic function describes the relationship. Second, whereas $\rho$ assumes bivariate normality, $r_{s}$ makes no assumptions about the distribution of either variable.
+
+### Test for no zero correlation
+
+As before, our goal is test if there are significative differences between the two group of patients: ASD and TD.
+After pooling the data, we have a sigle dataframe of 116 ROIs x 145 observations for the ASD, and a sigle dataframe of 116 ROIs x 145 observations for the TD group.
+In order to test if there are significative differences between the two group, we compute the correlations between each pair of ROIs for both the ASD and TD group. Then we consider the difference between the correlations and we test if the differences are significative different from 0.
+In order to that we want check if $|r_{sASDi,j} - r_{sTDi,j}| > th $ where th is a specific threshold. 
+In particular we build a confidence interval for each pair of ROIs and we test if the interval $[-th, th]$  intersects the confidence intervals, in this case we can not reject the hypothesis of a 0 correlation. Otherwise, if the confident interval does not intersect the interval [-th, th] we can say that the differecence is significative different from 0, in order words there are enough evidences against the hypothesis of zero correlation. 
+
+### Build Confidence Interval: the Bootstrap way 
+
+In order to test the significance of the correlation, we will construct a confidence interval (CI). This is usually more informative than used a table of critical values because a CI allows an assessment of the null hypothesis and provides additional information, such as the precision with which a population parameter has been estimated. The more narrow the CI, the greater the precision of the estimate.
+
+There are two approach to build a CI:
+
+ As previously done with Pearson, also with Spearman's $r_{s}$ it is possible to apply the Fisher Z transform. After trasforming $r_{s}$ to z, the z is say be approximately normal. We then estimate the standard error using a specific formula.
+
+However, constructing CIs using this method involves an assumption about the shape of the sampling distribution that may not be satisfied and so the coverage of these CIs may deviate from the nominal level.
+Bootstrap methods for constructing CIs avoid this problem. Rather than using a formula to estimate the variance of a statistic and making an assumption about the shape of its sampling distribution, one treats the available data as the best estimate of the population, draws random samples from it a large number of times, and calculates the statistic in each of these bootstrap samples.
+
+In particular what we do is:
+
+Given 116 ROIs for each group, we consider all the possible 6670 pairs of them.
+
+Considering a single pair, each ROI is made by N = 145 observations, we
+
+1) sampling with replacement N data points (the _boostrap sample_), from the two ROIs of group ASD and from two ROIs of group TD.
+
+2) we calculate the $r_{s1}$ on the bootstrap sample, and $r_{s2}$
+
+3) compute  $r_{s} = r_{s1} - r_{s2}$ 
+
+4) Reapeat step 1 and 2 B times, with B equals to 599 of greater
+
+The collection of B replicates of $r_{s}$ represents the empirical sampling distribution. 
+
+We can now get a CI. 
+
+We consider two type of CI:
+
+- the percentile 
+- the bias-corrected and accelerated (BCA)
+
+In the percentile CI at level 1 - $alpha$, the limits of the CI are defined by the $\frac{\alpha}{2}$ and $1- \frac{\alpha}{2}$ quantiles.
+
+When empirical sampling distributions are asymmetric, however,
+the bias-corrected and accelerated (BCA) bootstrap method often provides better coverage.
+
+``` {r Spearman Test Funtion, echo = TRUE, warning= FALSE, message = FALSE}
+
+d_spearman_ci <- function(x1, x2, y1, y2, nboot = 599, conf.level = .95) {
+  # Compute a confidence interval for the difference 
+  # between two Spearman correlations  
+  # corresponding to two independent groups.
+  
+  cl <- match.call()
+  a <- (1 - conf.level)
+  
+  #Bootstrap Procedure
+  data1 <-matrix(sample(length(y1),size=length(y1)*nboot,replace=TRUE),nrow=nboot)
+  bvec1 <- apply(data1, 1, function(xx) cor(rank(x1[xx]), rank(y1[xx])))
+  
+  data2<-matrix(sample(length(y2),size=length(y2)*nboot,replace=TRUE),nrow=nboot)
+  bvec2<-apply(data2,1,function(xx) cor(rank(x2[xx]), rank(y2[xx]))) 
+  
+  bvec <- (bvec1 - bvec2)
+  N <- length(y1) + length(y2)
+  
+  ci.percentile <- quantile(bvec, probs = c(a/2, 1 - a/2))
+  ci.bca <- bca(bvec, conf.level = conf.level)
+  
+  result <- list(ci_perc = ci.percentile, ci_bca = ci.bca, call = cl)
+  return(result)
+}
+
+d_spear_ci_mtest <- function(mat_g1, mat_g2, nboot = 599, conf.level = 0.95) 
+{
+  mat_g1 <- as.matrix(mat_g1)
+  mat_g2 <- as.matrix(mat_g2)
+  
+  n <- ncol(mat_g1)
+  lowCI.perc.mat <- lowCI.bca.mat <- matrix(NA, n, n)
+  uppCI.perc.mat <- uppCI.bca.mat <- matrix(NA, n, n)
+  diag(lowCI.perc.mat) <- diag(lowCI.bca.mat) <- 0
+  diag(uppCI.perc.mat) <- diag(uppCI.bca.mat) <- 0
+  
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      tmp <- d_spearman_ci(x1 = mat_g1[, i], y1 = mat_g1[, j],
+                             x2 = mat_g2[, i], y2 = mat_g2[, j],
+                             nboot = nboot,
+                             conf.level = conf.level)
+      
+      lowCI.perc.mat[i, j] <- lowCI.perc.mat[j, i] <- tmp$ci_perc[1]
+      uppCI.perc.mat[i, j] <- uppCI.perc.mat[j, i] <- tmp$ci_perc[2]
+      lowCI.bca.mat[i, j] <- lowCI.bca.mat[j, i] <- tmp$ci_bca[1]
+      uppCI.bca.mat[i, j] <- uppCI.bca.mat[j, i] <- tmp$ci_bca[2]
+      
+    }
+  }
+  results <- list(
+       lowCI.perc = lowCI.perc.mat, 
+       uppCI.perc = uppCI.perc.mat, 
+       lowCI.bca = lowCI.bca.mat,
+       uppCI.bca = uppCI.bca.mat)
+  return(results)
+}
+
+
+``` 
+
+### Bonferroni Correction
+
+Also here we apply the _Bonferroni Correction_, by testing each individual hypothesis at a significance level of $\frac{\alpha}{m}$, where $\alpha$ is the desired overall type I error probability and $m$ is the number of hypothesis, in our case $m =$ ${116}\choose{2}$ $= 6670$.
+
+Hence, we build a confidence sets at level $1 - \frac{\alpha}{m}$, where $\alpha$ is 0.05.
+
+``` {r Spearman and Bootstrap applied, echo = TRUE, warning= FALSE, message = FALSE}
+
+m <- 6670
+alpha <- 0.05
+th <- 0.45
+
+rk1 <- apply(asd_mean, 2, function(x) rank(x))
+rk2 <- apply(td_mean, 2, function(x) rank(x))
+cor.s.asd <- cor(rk1)
+cor.s.td  <- cor(rk2)
+
+delta.s.cor <- cor.s.asd - cor.s.td
+
+delta_s_mtest <- d_spear_ci_mtest(asd_mean, td_mean, conf.level = 1 - (alpha/m), nboot = 2)
+
+CIlow <- delta_s_mtest$lowCI.perc
+CIup <- delta_s_mtest$uppCI.perc
+CIlow2 <- delta_s_mtest$lowCI.bca
+CIup2 <- delta_s_mtest$uppCI.bca
+
+dimnames(CIlow) <- dimnames(cor.s.asd)
+dimnames(CIup)<- dimnames(cor.s.asd)
+dimnames(CIlow2)<- dimnames(cor.s.asd)
+dimnames(CIup2)<- dimnames(cor.s.asd)
+
+#check which ROI's confidence interval does not intersect [-t, t]
+verteces.linked <- which((CIlow > th | CIup < - th), arr.ind = T)
+
+CIlow[lower.tri(CIlow, diag = T)] <- 0 
+indeces <- which((CIlow > th | CIup < - th), arr.ind=TRUE)
+edges.s <- cbind(rownames(CIlow)[indeces[,"row"]], colnames(CIlow)[indeces[,"col"]])
+verteces.name <- union(rownames(CIlow)[indeces[,"row"]], colnames(CIlow)[indeces[,"col"]])
+edges.s.labels <- apply(X = edges.s, MARGIN = 1, function(x) paste(x[1], x[2], sep = "-"))
+
+cat("Number of significant edges:", length(edges.s.labels))
+```
+
+We found that about 150 values of difference between correlations are significative, also applied the _Bonferroni Correction._, a number higher than what we obtain we Pearson correlation.
+
+Spearman's correlation is able to pick up associations not captured by Pearson correlation, infact, Pearson can capture only linear relationship between two random vectors.
+
+Below we visualized the top 10 results of them, order by the difference between correlations. ROI_IDs indicates the two name of the two ROIs involved, corr_ASD is the correlation of the two ROIs observed in the ASD group, similary to corr_TD, delta_corr is the difference between the previous values, low_percentile and up_percentile are the extremes of the percentile CI, followed by the extremes of the bca confidence interval.
+
+```{r results, echo=TRUE, echo = TRUE, warning= FALSE, message = FALSE}
+
+#correlation matrices 
+#difference corr matrix
+asd.s.result <- round(cor.s.asd[indeces],3)
+td.s.result <- round(cor.s.td[indeces],3)
+delta.s.result <- round(delta.s.cor[indeces],3)
+delta.s.cilow.result <- round(CIlow[indeces],3)
+delta.s.ciup.result <- round(CIup[indeces],3)
+delta.s.bcalow.result <- round(CIlow2[indeces],3)
+delta.s.bcaup.result <- round(CIup2[indeces],3)
+
+results.spearman <- data.frame(
+  ROI_IDs = edges.s.labels,
+  corr_ASD = asd.s.result,
+  corr_TD = td.s.result,
+  delta_corr = delta.s.result,
+  low_percentile = delta.s.cilow.result,
+  up_percentile= delta.s.ciup.result,
+  low_BCA = delta.s.bcalow.result,
+  up_BCA = delta.s.bcaup.result
+)
+
+#top 10 rows based on delta corr
+top_n(results.spearman, 10, delta_corr)
+``` 
+
+Let's see now the resulting network:
+in purple the regions with significant connections, in green and smaller the regions in which no different correlations have been observed.
+
+``` {r spearman graphs, echo=TRUE, message = FALSE, warning=FALSE}
+th <- 0.45
+CIlow2 <- delta_s_mtest$lowCI.bca
+CIup2 <- delta_s_mtest$uppCI.bca
+dimnames(CIlow2)<- dimnames(cor.s.asd)
+dimnames(CIup2)<- dimnames(cor.s.asd)
+
+delta.s.adj.mat <- matrix(0, nrow = n, ncol = n, dimnames = dimnames(cor.s.asd))
+delta.s.adj.mat[(CIlow2 > th | CIup2 < - th)] <- 1
+
+net <- network(x = delta.s.adj.mat, directed = FALSE, matrix.type = "adjacency")
+net  %v% "connected" = ifelse(dimnames(asd.cor.mat)[[1]] %in% verteces.name, "yes", "no")
+net %v% "color" = ifelse(net %v% "connected" == "yes", "tomato", "steelblue")
+ggnet2(net, color = "connected", 
+       palette = c("yes" = "tomato", "no" = "steelblue"),
+       mode = "fruchtermanreingold", 
+       layout.par = list(cell.jitter = 0.75),
+        label = TRUE, label.size = 4,
+       size = 12,
+       edge.size = 1,
+       edge.color = "darkgreen"
+       ) + 
+  theme(
+    plot.title = element_text(size=12)
+  ) +
+  labs(title = "Spearman's difference graph",
+       caption = "(with Bonferroni correction)")
+``` 
+
+
+### The choice of the threshold 
+
+In order to choice a suitable threshold, we followed the following reasoning:
+
+The null hypothesis is the proposition that there is no difference between the two populations. If the null hypothesis is true, any observed difference in populations would be due to sampling error (random chance).
+So, an experimental result was said to be statistically significant if a sample was sufficiently inconsistent with the (null) hypothesis, over the level of the noise.
+For this reason we determine a threshold that take into account the variability of the data, in order to determinate if observed test statistic is more extreme than would be expected, in symbol if $|\Delta r| > th$. 
+
+Our strategy is:
+
+- obtain an estimate of the distribution of the _difference between the Spearman correlations_, via Bootstrap. 
+- obtain then an estimate of its standard error
+- fix the threshold as two times the standard error
+
+
+```{r bootstrap aprox distribution of delta, echo=TRUE, message = FALSE, warning=FALSE}
+boot_delta <- function(x1, x2, y1, y2, nboot = 599) {
+  
+  data1 <-matrix(sample(length(y1),size=length(y1)*nboot,replace=TRUE),nrow=nboot)
+  bvec1 <- apply(data1, 1, function(xx) cor(rank(x1[xx]), rank(y1[xx])))
+  
+  data2<-matrix(sample(length(y2),size=length(y2)*nboot,replace=TRUE),nrow=nboot)
+  bvec2<-apply(data2,1,function(xx) cor(rank(x2[xx]), rank(y2[xx]))) 
+  
+  brep <- bvec1-bvec2
+  return(brep)
+}
+
+mat_g1 <- as.matrix(asd_mean)
+mat_g2 <- as.matrix(td_mean)
+
+n <- ncol(asd_mean)
+brep <- c()
+for (i in 1:(n - 1)) {
+  for (j in (i + 1):n) {
+    tmp <- boot_delta(x1 = mat_g1[, i], y1 = mat_g1[, j],
+                      x2 = mat_g2[, i], y2 = mat_g2[, j])
+    brep <- c(brep,tmp)
+  }
+}
+
+round(summary(brep),3)
+se_boot <- sd(brep)
+round(c(se_boot = se_boot),3)
+
+``` 
+
+Below the graph of the distribution estimate via bootstrap is shown; with the determination of standard error.
+
+The threshold is fixed as: $th = 2 \times se$, where $se$ is the standar error.
+
+
+``` {r bootstrap plot, echo=TRUE, message = FALSE, warning=FALSE,result = 'asis'}
+
+a <- 0.05
+q <- 0 +  c(-1,1) * se_boot
+q.abs <- 2*se_boot
+hist(brep, probability = T, col = "tomato", border = "white",
+     xlab = expression(hat(rho)[sASD] - hat(rho)[sTD]),
+     main = "Bootstrap approximation to the sampling distribution \n of the difference between Spearman correlation",
+     sub = "(points in yellow indicates the threshold)")
+points(x = q[1],y = 0, bg = "yellow", pch = 21, col = "blue")
+points(x = q[2],y = 0, bg = "yellow", pch = 21, col = "blue")
+
+hist(
+  abs(brep), probability = T, col = "royalblue", border = "white",
+     main = "Bootstrap approximation to the sampling distribution \n of the absolute difference between Spearman correlation",
+  sub = "(point in green indicate the the threshold)",
+  xlab =expression(paste("|", hat(rho)[sASD] - hat(rho)[sTD],"|"))
+  )
+
+points(x = q.abs, y = 0, bg = "green", pch = 21, col = "blue")
+
+cat("bootstrap estimate of the standard error", round(se_boot,3))
+cat("\n")
+cat("\n")
+cat("Threshold fixed at: ", 2 * round(se_boot,3))
+```
+
+### Spearman's rank: Conclusion 
+
+``` {r edges above the th, echo=TRUE, message = FALSE, warning=FALSE, result = 'asis'}
+th <- 0.45
+
+#check which ROI's confidence interval does not intersect [-t, t]
+CIlow <- delta_s_mtest$lowCI.perc
+CIup <- delta_s_mtest$uppCI.perc
+
+CIlow[lower.tri(CIlow, diag = T)] <- 0 
+indeces <- which((CIlow > th | CIup < - th), arr.ind=TRUE)
+cat("Number of edges:")
+cat("\n")
+nrow(indeces)
+```
+
+As we said, there are about 150 significant edges in the graph of the difference between the two group. We note they are much more than those identified by Pearson correlation, demonstrating the fact that Spearman's rho is able to identify associations not captured by Pearson (this one in fact responds only when there is a linear relation between the variables). 
+
+However,it is reasonable to think that it is too small a number compared to the number of possible bonds (6670), and therefore we do not have sufficient evidence in favor of a difference between the two populations.
+
+
+
+## Pool together the data: KMeans 
+
+We repeat now the experiment using a second way to pool together the data. 
+In this chunk of code we try to create a 145x116 matrix for both the lists. In these matrices we want to concentrate all the information of the observation from the original datasets. So we apply the mean over them.Before doing it we want to distinguish in some way the samples that we want to use for the mean. For this reason we use the Kmeans algorithm to group the samples into 145 clusters that is the number of rows that we want to obtain in the final matrix. So the mean of each cluster corresponds to a row in the final matrix. The purpose of this is trying to take the mean of samples that are as close as possible to each other. In this way we
+try to keep all the information from the original dataset even in a shorter one. Before doing the Kmeans we normalize the sample values.
+
+```{r}
+# ASD ---------------------------------------------------------------
+asd.mat= as.matrix(do.call(rbind,asd_sel))  #concatenate lists in asd_sel
+rownames(asd.mat)=NULL #remove row names 
+asd.scaled=scale(asd.mat) # scale the range of the values
+
+#KMeans 
+clusters <- kmeans(asd.scaled, 145)  
+asd.new= cbind(clusters$cluster,asd.scaled) # add the cluster column to the matrix 
+
+asd.final= matrix(NA,nrow = 145,ncol = 116) # result matrix
+# for each cluster we take the mean of the columns, creating a new sample that contains the info
+# about the most similar samples 
+for (i in 1:145){
+  idx=which(asd.new[,1]==i)
+  
+  row= colMeans(as.matrix(asd.new[idx,2:117]))
+  
+  asd.final[i,]= t(row)
+  
+}
+
+# TD  ----------------------------------------------------------------
+
+td.mat= as.matrix(do.call(rbind,td_sel))  #concatenate lists in td_sel
+
+rownames(td.mat)=NULL #remove row names 
+
+td.scaled=scale(td.mat) # scale the range of the values
+
+#KMeans 
+clusters <- kmeans(td.scaled, 145)  
+td.new= cbind(clusters$cluster,td.scaled) # add the cluster column to the matrix 
+
+td.final= matrix(NA,nrow = 145,ncol = 116) # result matrix
+# for each cluster we take the mean of the columns, creating a new sample that contains the info
+# about the most similar samples 
+for (i in 1:145){
+  idx=which(td.new[,1]==i)
+  
+  row= colMeans(as.matrix(td.new[idx,2:117]))
+  
+  td.final[i,]= t(row)
+  
+}
+
+```
+
+Now we use the functions to perform the correlation test. 
+We have to test if each column is correlated to all the other columns. 
+In our case we have to use the threshold t that we found before to check the correlation between two areas. So we used our version of the R function _cor.test_ explained previously, using the Pearson correlation. 
+We also apply again the Fisher's transform to perform the test. So we get the atanh both of the absolute value of the correlation and the threshold and then we apply the formula in the variable 'test'. From the result we calculate the p-value and the 95% confidence interval.
+
+```{r, echo = FALSE}
+# Test Functions ----------------------------------------------------------
+
+#def test function 
+cor.mtest <- function(mat,th, conf.level = 0.95){
+  mat <- as.matrix(mat)
+  n <- ncol(mat)
+  p.mat <- lowCI.mat <- uppCI.mat <- matrix(NA, n, n)
+  diag(p.mat) <- 0
+  diag(lowCI.mat) <- diag(uppCI.mat) <- 1
+  for(i in 1:(n-1)){
+    for(j in (i+1):n){
+      tmp <- cor.mytest(mat[,i], mat[,j],th, conf.level = conf.level)
+      p.mat[i,j] <- p.mat[j,i] <- tmp$p.value
+      lowCI.mat[i,j] <- lowCI.mat[j,i] <- tmp$conf.int[1]
+      uppCI.mat[i,j] <- uppCI.mat[j,i] <- tmp$conf.int[2]
+    }
+  }
+  return(list(pval = p.mat, low = lowCI.mat, up = uppCI.mat))
+}
+
+cor.mytest<- function(x,y,th,conf.level=0.95){
+  n= length(x)
+  r=abs(cor(x,y))
+  z= atanh(r)
+  z.th= atanh(th)
+  sigma <- 1 / sqrt(n - 3)
+  test= (z-z.th)/sigma
+  conf.int <- c(test - sigma * qnorm(conf.level), Inf)
+  conf.int <- tanh(conf.int)
+  p.value= pnorm(test,lower.tail = F)
+  return(list('p.value'=p.value,'conf.int'= conf.int))
+}
+
+```
+
+Now we apply the test functions to the ASD matrix and we use the p-value to evaluate the correlation between the areas. We first use the Bonferroni Correction that obviously give us a more accurate result. In fact the number of edges of the first graph is lower than the second one, so we avoided a lot of 'False edges', that correspond to areas that are not actually correlated.
+
+```{r}
+#  ASD ----------------------------------------------------
+
+#get the correlation matrix
+asd.cor= cor(asd.final)
+#plot asd matrix and add a normal distribution curve 
+hist(asd.final,col = 'Red',probability = T,main = 'Histogram of observation matrix',sub='ASD')
+curve(dnorm(x,mean = 0,sd = 1),from = -4, to= 4,add=T,col= 'Blue',lwd= 4)
+
+asd.result= cor.mtest(asd.final,th)
+
+hist(asd.result$pval,col='Orchid', probability = T,main= 'P-value distribution',sub='ASD')  
+alpha=0.05
+m= choose(116,2)
+p_val.mat  = matrix(0, nrow = nrow(asd.cor), ncol = ncol(asd.cor))
+
+#Bonferroni correction
+p_val.mat[which(asd.result$pval<(alpha/m))]=1  
+diag(p_val.mat)=0
+
+
+G1 <- graph_from_adjacency_matrix(p_val.mat, mode = "undirected")
+
+
+#without correction
+p_val.mat.uncor=matrix(0, nrow = nrow(asd.cor), ncol = ncol(asd.cor))
+p_val.mat.uncor[which(asd.result$pval<(alpha))]=1  
+diag(p_val.mat.uncor)=0
+
+G1.uncorr <- graph_from_adjacency_matrix(p_val.mat.uncor, mode = "undirected")
+
+par(mfrow= c(1,2))
+
+plot(G1, main= 'ASD association graph',
+     sub= 'Bonferroni correction',
+     edge.width= 2,
+     curved= T,
+     vertex.size= 14)
+plot(G1.uncorr, main= 'ASD association graph',
+     sub= 'No correction',
+     edge.width= 2,
+     curved= T,
+     vertex.size= 14)
+```
+
+We use the same method for the TD matrix, and we obtained the same results comparing the corrected graph with the uncorrected one.
+
+```{r}
+#  TD -------------------------------------------------
+
+td.cor= cor(td.final)
+hist(td.final,col = 'Red',probability = T,main='Histogram of observation matrix',sub='TD')
+curve(dnorm(x,mean = 0,sd = 1),from = -4, to= 4,add=T,col= 'Blue',lwd= 4)
+
+
+td.result= cor.mtest(td.cor,th)
+
+hist(td.result$pval,col='Orchid', probability = T,main = 'P-value distribution', sub='TD')  
+alpha=0.05
+m= choose(116,2)
+p_val.mat.td  = matrix(0, nrow = nrow(td.cor), ncol = ncol(td.cor))
+
+#Bonferroni correction
+p_val.mat.td[which(td.result$pval<(alpha/m))]=1  
+
+
+View(p_val.mat.td)
+diag(p_val.mat.td)=0
+
+
+G2 <- graph_from_adjacency_matrix(p_val.mat.td, mode = "undirected")
+
+
+#without correction
+p_val.mat.td.uncorr  = matrix(0, nrow = nrow(td.cor), ncol = ncol(td.cor))
+
+p_val.mat.td.uncorr[which(td.result$pval<(alpha))]=1  
+diag(p_val.mat.td.uncorr)=0
+
+G2.uncorr <- graph_from_adjacency_matrix(p_val.mat.td, mode = "undirected")
+
+par(mfrow= c(1,2))
+
+plot(G2, main= 'TD association graph',
+     sub= 'Bonferroni correction',
+     edge.width= 2,
+     curved= T,
+     vertex.size= 12,
+     vertex.label.cex=0.2)
+plot(G2.uncorr, main= 'TD association graph',
+     sub= 'No correction',
+     edge.width= 2,
+     curved= T,
+     vertex.size= 12,
+     vertex.label.cex=0.2)
+
+cat(c(sum(p_val.mat.td),sum(p_val.mat.td.uncorr)))
+```
+
+Now we are interested in the correlation differences between the two groups, so we want to test if the difference value of the correlations between all the columns is statistically significant. We define two new test functions. In the first we apply the test over all the pairs of columns, giving as argument two columns of the ASD matrix and the correspondents columns of TD matrix. Then we calculate two separate correlations and we check if the difference is significantly different from t, that is the same threshold we pick for the previous test. So we modify the test function as we did before, but now the quantity of interest 'z' is the difference between the absolute values of the correlations. We change also the value of sigma according to the correct formula.
+
+```{r, echo = FALSE}
+cor.mtest.diff <- function(mat,mat2,th, conf.level = 0.95){
+  mat <- as.matrix(mat)
+  mat2<- as.matrix(mat2)
+  n <- ncol(mat)
+ 
+  
+  p.mat <- lowCI.mat <- uppCI.mat <- matrix(NA, n, n)
+  diag(p.mat) <- 0
+  diag(lowCI.mat) <- diag(uppCI.mat) <- 1
+  for(i in 1:(n-1)){
+    for(j in (i+1):n){
+      tmp <- cor.mytest.diff(mat[,i], mat[,j],mat2[,i],mat2[,j],th, conf.level = conf.level)
+      p.mat[i,j] <- p.mat[j,i] <- tmp$p.value
+      lowCI.mat[i,j] <- lowCI.mat[j,i] <- tmp$conf.int[1]
+      uppCI.mat[i,j] <- uppCI.mat[j,i] <- tmp$conf.int[2]
+    }
+  }
+  return(list(pval = p.mat, low = lowCI.mat, up = uppCI.mat))
+}
+
+cor.mytest.diff<- function(x1,x2,y1,y2,th,conf.level=0.95){
+  n= length(x1)
+  r1=abs(cor(x1,x2))
+  r2= abs(cor(y1,y2))
+  z1= atanh(r1)
+  z2= atanh(r2)
+  z.th= atanh(th)
+  sigma= 1/( n-3)
+  sigma <-sqrt(sigma+ sigma)
+  z= (z1-z2)
+  test= (z-z.th)/sigma
+  conf.int <- c(test - sigma * qnorm(conf.level), Inf)
+  conf.int <- tanh(conf.int)
+  p.value= pnorm(test,lower.tail = F)
+  return(list(p.value=p.value,conf.int= conf.int))
+}
+```
+
+Now we apply the function to the initial matrices and we use the Bonferroni correction to evaluate the result.
+
+```{r}
+diff.result=cor.mtest.diff(asd.final,td.final,th)
+diag(diff.result$pval)=1
+cat('The number of differences is: ',sum(diff.result$pval<(alpha/m)) )
+
+```
+
+We can see that the correlation difference between the two groups is quite small.
+
+```{r}
+diff.result=cor.mtest.diff(asd.final,td.final,th)
+diag(diff.result$pval)=1
+cat('The number of differences is: ',sum(diff.result$pval<(alpha)) )
+
+```
+
+If we don't use the Bonferroni correction the number of significant differences increases a lot.
+
+
+
+### References
